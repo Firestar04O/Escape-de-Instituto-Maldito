@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.InputSystem;
 using UnityEngine.InputSystem.EnhancedTouch;
+using SchoolEscape.Rooms;
+using SchoolEscape.UI;
 using Touch = UnityEngine.InputSystem.EnhancedTouch.Touch;
 
 public class SchoolEscapePrototype : MonoBehaviour
@@ -18,12 +20,15 @@ public class SchoolEscapePrototype : MonoBehaviour
     public int Bandages { get; private set; }
     public float RunTime { get; private set; }
     public float DangerMultiplier => 1f + RunTime / 80f + (Ally != null && Ally.IsCaptive ? 1.5f : 0f);
+    public MobileHudController MobileHud { get; private set; }
 
     private readonly List<PrototypeEnemy> enemies = new List<PrototypeEnemy>();
     private readonly List<PrototypeInteractable> interactables = new List<PrototypeInteractable>();
     private Material floorMaterial;
     private Material wallMaterial;
     private Material furnitureMaterial;
+    private SchoolRoomDefinition authoredRoom;
+    private readonly List<Vector3> activeEnemySpawnPoints = new List<Vector3>();
     private float spawnTimer = 10f;
     private string message = "Encuentra la llave y escapa";
     private float messageUntil = 4f;
@@ -48,8 +53,19 @@ public class SchoolEscapePrototype : MonoBehaviour
     private void Awake()
     {
         I = this;
+        MobileHud = FindFirstObjectByType<MobileHudController>();
+        ConfigureMobileOrientation();
         EnhancedTouchSupport.Enable();
         BuildPrototype();
+    }
+
+    private static void ConfigureMobileOrientation()
+    {
+        Screen.autorotateToPortrait = false;
+        Screen.autorotateToPortraitUpsideDown = false;
+        Screen.autorotateToLandscapeLeft = true;
+        Screen.autorotateToLandscapeRight = true;
+        Screen.orientation = ScreenOrientation.AutoRotation;
     }
 
     private void OnDestroy()
@@ -77,6 +93,13 @@ public class SchoolEscapePrototype : MonoBehaviour
     private void BuildPrototype()
     {
         Debug.Log("[SchoolEscape] Construyendo prototipo");
+        authoredRoom = FindFirstObjectByType<SchoolRoomDefinition>();
+        if (authoredRoom != null)
+        {
+            BuildAuthoredRoomPrototype();
+            return;
+        }
+
         foreach (Camera oldCamera in FindObjectsByType<Camera>(FindObjectsSortMode.None))
             Destroy(oldCamera.gameObject);
 
@@ -161,9 +184,86 @@ public class SchoolEscapePrototype : MonoBehaviour
         lightObject.transform.rotation = Quaternion.Euler(55f, -30f, 0f);
     }
 
+    private void BuildAuthoredRoomPrototype()
+    {
+        Debug.Log($"[SchoolEscape] Usando sala guardada: {authoredRoom.RoomId}");
+
+        activeEnemySpawnPoints.Clear();
+        for (int index = 0; index < authoredRoom.EnemySpawnCount; index++)
+        {
+            Transform spawn = authoredRoom.GetEnemySpawn(index);
+            if (spawn != null) activeEnemySpawnPoints.Add(spawn.position + Vector3.up);
+        }
+
+        RegisterAuthoredInteractables();
+
+        Transform playerSpawn = authoredRoom.GetPlayerSpawn(0);
+        Transform allySpawn = authoredRoom.GetPlayerSpawn(1);
+        Vector3 playerPosition = playerSpawn != null ? playerSpawn.position + Vector3.up : authoredRoom.transform.position + Vector3.up;
+        Vector3 allyPosition = allySpawn != null ? allySpawn.position + Vector3.up : playerPosition + Vector3.right * 1.7f;
+
+        Player = CreateCapsule("Jugador", playerPosition, new Color(.18f, .52f, 1f)).AddComponent<PrototypePlayer>();
+        Ally = CreateCapsule("Compañero de prueba", allyPosition, new Color(.25f, .9f, .38f)).AddComponent<PrototypeAlly>();
+
+        if (activeEnemySpawnPoints.Count > 0)
+        {
+            SpawnEnemy(true);
+            SpawnEnemy(false);
+        }
+
+        Camera camera = Camera.main != null ? Camera.main : FindFirstObjectByType<Camera>();
+        if (camera == null)
+        {
+            GameObject cameraObject = new GameObject("Top Down Camera");
+            camera = cameraObject.AddComponent<Camera>();
+            camera.tag = "MainCamera";
+            cameraObject.AddComponent<AudioListener>();
+        }
+
+        camera.fieldOfView = 48f;
+        if (camera.GetComponent<PrototypeCamera>() == null)
+            camera.gameObject.AddComponent<PrototypeCamera>();
+
+        ShowMessage("Activa el panel eléctrico y llega a la salida", 5f);
+    }
+
+    private void RegisterAuthoredInteractables()
+    {
+        RegisterChildrenAs<PrototypeLocker>(authoredRoom.RandomInteractablesRoot);
+        RegisterChildrenAs<PrototypeBatteryFurniture>(authoredRoom.GuaranteedBatteryRoot);
+        RegisterChildrenAs<PrototypeBandageFurniture>(authoredRoom.GuaranteedBandageRoot);
+
+        if (authoredRoom.ExitPanel != null)
+        {
+            PrototypeExitPanel panel = authoredRoom.ExitPanel.GetComponent<PrototypeExitPanel>();
+            if (panel == null) panel = authoredRoom.ExitPanel.gameObject.AddComponent<PrototypeExitPanel>();
+            Register(panel);
+        }
+
+        foreach (Transform exit in authoredRoom.Exits)
+        {
+            if (exit == null) continue;
+            PrototypeDoor door = exit.GetComponent<PrototypeDoor>();
+            if (door == null) door = exit.gameObject.AddComponent<PrototypeDoor>();
+            Register(door);
+        }
+    }
+
+    private void RegisterChildrenAs<T>(Transform root) where T : PrototypeInteractable
+    {
+        if (root == null) return;
+        foreach (Transform child in root)
+        {
+            T interactable = child.GetComponent<T>();
+            if (interactable == null) interactable = child.gameObject.AddComponent<T>();
+            Register(interactable);
+        }
+    }
+
     private void SpawnEnemy(bool small)
     {
-        GameObject enemy = CreateCapsule(small ? "Cultista chico" : "Cultista normal", EnemySpawnPoints[Random.Range(0, EnemySpawnPoints.Length)], small ? new Color(.95f, .25f, .15f) : new Color(.62f, .08f, .09f));
+        Vector3 spawnPoint = GetRandomEnemySpawn();
+        GameObject enemy = CreateCapsule(small ? "Cultista chico" : "Cultista normal", spawnPoint, small ? new Color(.95f, .25f, .15f) : new Color(.62f, .08f, .09f));
         enemy.transform.localScale = small ? new Vector3(.72f, .72f, .72f) : new Vector3(1.15f, 1.15f, 1.15f);
         PrototypeEnemy controller = enemy.AddComponent<PrototypeEnemy>();
         controller.IsSmall = small;
@@ -173,11 +273,19 @@ public class SchoolEscapePrototype : MonoBehaviour
     public void UnregisterEnemy(PrototypeEnemy enemy) => enemies.Remove(enemy);
     public void Register(PrototypeInteractable interactable) => interactables.Add(interactable);
 
-    public static Vector3 ClosestEnemySpawn(Vector3 position)
+    private Vector3 GetRandomEnemySpawn()
     {
-        Vector3 closest = EnemySpawnPoints[0];
+        if (activeEnemySpawnPoints.Count > 0)
+            return activeEnemySpawnPoints[Random.Range(0, activeEnemySpawnPoints.Count)];
+        return EnemySpawnPoints[Random.Range(0, EnemySpawnPoints.Length)];
+    }
+
+    public Vector3 ClosestEnemySpawn(Vector3 position)
+    {
+        IReadOnlyList<Vector3> spawnPoints = activeEnemySpawnPoints.Count > 0 ? activeEnemySpawnPoints : EnemySpawnPoints;
+        Vector3 closest = spawnPoints[0];
         float bestDistance = float.MaxValue;
-        foreach (Vector3 spawn in EnemySpawnPoints)
+        foreach (Vector3 spawn in spawnPoints)
         {
             float distance = (spawn - position).sqrMagnitude;
             if (distance >= bestDistance) continue;
@@ -215,6 +323,14 @@ public class SchoolEscapePrototype : MonoBehaviour
     {
         HasKey = true;
         ShowMessage("Llave encontrada. Ve a la salida.", 4f);
+    }
+
+    public void UnlockExit()
+    {
+        HasKey = true;
+        if (authoredRoom != null)
+            authoredRoom.GetComponent<RoomObjectiveController>()?.UnlockImmediately();
+        ShowMessage("Salida desbloqueada. Reúnanse en la puerta.", 4f);
     }
 
     public void AddBattery()
@@ -291,6 +407,7 @@ public class SchoolEscapePrototype : MonoBehaviour
 
     private void OnGUI()
     {
+        if (MobileHud != null && MobileHud.isActiveAndEnabled) return;
         EnsureStyles();
         float scale = Mathf.Clamp(Screen.width / 1000f, .72f, 1.35f);
         GUI.matrix = Matrix4x4.Scale(Vector3.one * scale);
@@ -299,7 +416,7 @@ public class SchoolEscapePrototype : MonoBehaviour
 
         GUI.Box(new Rect(18, 16, 310, 118), "");
         GUI.Label(new Rect(32, 25, 290, 32), "SCHOOL ESCAPE: CULT NIGHT", titleStyle);
-        GUI.Label(new Rect(32, 55, 280, 74), $"Vida: {Hearts(Player != null ? Player.Health : 0)}   Pilas: {Batteries}/3   Venda: {(Bandages > 0 ? "Sí" : "No")}\nLlave: {(HasKey ? "OBTENIDA" : "pendiente")}   Peligro: x{DangerMultiplier:0.0}", bodyStyle);
+        GUI.Label(new Rect(32, 55, 280, 74), $"Vida: {Hearts(Player != null ? Player.Health : 0)}   Pilas: {Batteries}/3   Venda: {(Bandages > 0 ? "Sí" : "No")}\nSalida: {(HasKey ? "DESBLOQUEADA" : "bloqueada")}   Peligro: x{DangerMultiplier:0.0}", bodyStyle);
 
         if (Ally != null)
         {
@@ -313,7 +430,7 @@ public class SchoolEscapePrototype : MonoBehaviour
         GUI.Label(new Rect(20, h - 112, 650, 92), "WASD: mover  |  Espacio: flash automático\nFLASH: clic corto = autoapuntar  |  Mantén y arrastra = apuntar, suelta = disparar\nE: interactuar/canalizar  |  B: usar venda  |  R: reiniciar", bodyStyle);
 
         GUI.Box(new Rect(w - 155, h - 145, 130, 55), Player != null && Player.IsAimingFlash ? "APUNTANDO..." : "FLASH");
-        if (GUI.Button(new Rect(w - 155, h - 82, 130, 55), "INTERACTUAR")) Player?.PulseInteract();
+        if (GUI.RepeatButton(new Rect(w - 155, h - 82, 130, 55), "INTERACTUAR")) Player?.PulseInteract();
         if (GUI.Button(new Rect(w - 295, h - 82, 125, 55), "VENDA")) UseBandage();
 
         GUI.Label(new Rect(30, h - 190, 175, 36), "Joystick táctil", centerStyle);
@@ -339,6 +456,8 @@ public class SchoolEscapePrototype : MonoBehaviour
 
     public static Rect FlashButtonScreenRect()
     {
+        if (I != null && I.MobileHud != null)
+            return I.MobileHud.GetFlashButtonScreenRect();
         float scale = Mathf.Clamp(Screen.width / 1000f, .72f, 1.35f);
         return new Rect(Screen.width - 155f * scale, Screen.height - 145f * scale, 130f * scale, 55f * scale);
     }
@@ -409,9 +528,11 @@ public abstract class PrototypeActor : MonoBehaviour
         return true;
     }
 
-    public void DragTo(Vector3 position)
+    public void DragTo(Vector3 position, Vector3 draggerForward)
     {
-        transform.position = position + Vector3.back * .8f;
+        draggerForward.y = 0f;
+        if (draggerForward.sqrMagnitude < .01f) draggerForward = Vector3.forward;
+        transform.position = position - draggerForward.normalized * .65f;
     }
 
     public virtual void Captured(Vector3 spawnPosition)
@@ -423,8 +544,57 @@ public abstract class PrototypeActor : MonoBehaviour
 
     public void ReleaseFromDrag()
     {
+        PrototypeEnemy previousDragger = Dragger;
+        if (previousDragger != null)
+            transform.position = FindSafeReleasePosition(previousDragger);
+
         Dragger = null;
+        previousDragger?.StopDragging(this);
         if (Controller != null) Controller.enabled = true;
+    }
+
+    public virtual void RescueFromDrag()
+    {
+        ReleaseFromDrag();
+        Health = 1;
+        nextDamageTime = Time.time + 1.5f;
+    }
+
+    private Vector3 FindSafeReleasePosition(PrototypeEnemy dragger)
+    {
+        Vector3 forward = dragger.transform.forward;
+        forward.y = 0f;
+        if (forward.sqrMagnitude < .01f) forward = Vector3.forward;
+        forward.Normalize();
+        Vector3 right = Vector3.Cross(Vector3.up, forward);
+        Vector3 origin = dragger.transform.position;
+        Vector3[] candidates =
+        {
+            origin - forward * 1.15f,
+            origin + right * 1.15f,
+            origin - right * 1.15f,
+            origin + forward * 1.15f,
+            origin
+        };
+
+        foreach (Vector3 candidate in candidates)
+        {
+            Vector3 bottom = candidate + Vector3.up * .45f;
+            Vector3 top = candidate + Vector3.up * 1.45f;
+            Collider[] overlaps = Physics.OverlapCapsule(bottom, top, .38f, ~0, QueryTriggerInteraction.Ignore);
+            bool blocked = false;
+            foreach (Collider overlap in overlaps)
+            {
+                if (overlap == null || overlap.gameObject == gameObject || overlap.gameObject == dragger.gameObject)
+                    continue;
+                blocked = true;
+                break;
+            }
+
+            if (!blocked) return candidate;
+        }
+
+        return origin;
     }
 
     public virtual void Rescue()
@@ -446,6 +616,7 @@ public class PrototypePlayer : PrototypeActor
     public Vector3 Facing { get; private set; } = Vector3.forward;
     public bool IsAimingFlash => aimingFlash;
     private const float Speed = 5.8f;
+    private const float MovementDeadZone = .08f;
     private bool interactPulse;
     private float flashCooldown;
     private PrototypeInteractable currentInteraction;
@@ -465,8 +636,15 @@ public class PrototypePlayer : PrototypeActor
 
         Vector2 move = ReadMove();
         Vector3 worldMove = new Vector3(move.x, 0f, move.y);
-        if (worldMove.sqrMagnitude > 1f) worldMove.Normalize();
-        if (worldMove.sqrMagnitude > .02f) Facing = worldMove.normalized;
+        if (worldMove.sqrMagnitude > MovementDeadZone * MovementDeadZone)
+        {
+            worldMove.Normalize();
+            Facing = worldMove;
+        }
+        else
+        {
+            worldMove = Vector3.zero;
+        }
         Move(worldMove * Speed);
 
         UpdateFlashButtonInput();
@@ -500,14 +678,19 @@ public class PrototypePlayer : PrototypeActor
             if (Keyboard.current.wKey.isPressed) value.y += 1f;
         }
 
-        Vector2 center = new Vector2(112f, 108f);
+        Vector2 center = SchoolEscapePrototype.I.MobileHud != null
+            ? SchoolEscapePrototype.I.MobileHud.MovementCenterScreen
+            : new Vector2(112f, 108f);
+        float joystickRadius = SchoolEscapePrototype.I.MobileHud != null
+            ? SchoolEscapePrototype.I.MobileHud.MovementRadiusScreen
+            : 65f;
         foreach (Touch touch in Touch.activeTouches)
         {
             Vector2 p = touch.screenPosition;
             if ((moveFinger < 0 && p.x < Screen.width * .42f && p.y < Screen.height * .42f) || touch.finger.index == moveFinger)
             {
                 moveFinger = touch.finger.index;
-                value = Vector2.ClampMagnitude((p - center) / 65f, 1f);
+                value = Vector2.ClampMagnitude((p - center) / joystickRadius, 1f);
                 if (touch.phase == UnityEngine.InputSystem.TouchPhase.Ended || touch.phase == UnityEngine.InputSystem.TouchPhase.Canceled)
                     moveFinger = -1;
                 break;
@@ -756,6 +939,13 @@ public class PrototypeAlly : PrototypeActor
         RescueInteraction.enabled = false;
         SchoolEscapePrototype.I.ShowMessage("Compañero rescatado", 3f);
     }
+
+    public override void RescueFromDrag()
+    {
+        base.RescueFromDrag();
+        RescueInteraction.enabled = false;
+        SchoolEscapePrototype.I.ShowMessage("Compañero liberado: 1 corazón e invulnerabilidad temporal", 3f);
+    }
 }
 
 public class PrototypeEnemy : MonoBehaviour
@@ -777,12 +967,13 @@ public class PrototypeEnemy : MonoBehaviour
 
         if (dragTarget != null)
         {
-            Vector3 destination = SchoolEscapePrototype.ClosestEnemySpawn(transform.position);
+            Vector3 destination = SchoolEscapePrototype.I.ClosestEnemySpawn(transform.position);
             Vector3 delta = destination - transform.position;
             delta.y = 0f;
             float draggingSpeed = (IsSmall ? 3.35f : 2.55f) * .5f;
+            if (delta.sqrMagnitude > .1f) transform.rotation = Quaternion.LookRotation(delta);
             controller.Move(delta.normalized * draggingSpeed * Time.deltaTime);
-            dragTarget.DragTo(transform.position);
+            dragTarget.DragTo(transform.position, delta.normalized);
             if (delta.magnitude < 1f)
             {
                 PrototypeActor captured = dragTarget;
@@ -830,7 +1021,7 @@ public class PrototypeEnemy : MonoBehaviour
     {
         if (dragTarget != null)
         {
-            dragTarget.ReleaseFromDrag();
+            dragTarget.RescueFromDrag();
             dragTarget = null;
         }
         if (IsSmall)
@@ -843,6 +1034,11 @@ public class PrototypeEnemy : MonoBehaviour
             stunnedUntil = Time.time + 1.2f;
             SchoolEscapePrototype.I.ShowMessage("Cultista aturdido 1.2 s", 1.2f);
         }
+    }
+
+    public void StopDragging(PrototypeActor actor)
+    {
+        if (dragTarget == actor) dragTarget = null;
     }
 }
 
@@ -878,6 +1074,108 @@ public class PrototypeKey : PrototypeInteractable
     public override void Complete(PrototypePlayer player)
     {
         SchoolEscapePrototype.I.CollectKey();
+        gameObject.SetActive(false);
+    }
+}
+
+public class PrototypeExitPanel : PrototypeInteractable
+{
+    private bool activated;
+    public override bool Available => base.Available && !activated;
+    public override float Duration => 1.5f;
+    public override string Prompt => "Activando panel eléctrico";
+
+    public override void Complete(PrototypePlayer player)
+    {
+        if (activated) return;
+        activated = true;
+        SchoolEscapePrototype.I.UnlockExit();
+    }
+}
+
+public abstract class PrototypeGuaranteedResourceFurniture : PrototypeInteractable
+{
+    private bool searched;
+    public override bool Available => base.Available && !searched;
+    public override float Duration => 2f;
+
+    public override void Complete(PrototypePlayer player)
+    {
+        if (searched) return;
+        searched = true;
+        SpawnGuaranteedResource(player);
+
+        Renderer targetRenderer = GetComponent<Renderer>();
+        if (targetRenderer != null)
+            targetRenderer.material.color *= .55f;
+    }
+
+    protected abstract void SpawnGuaranteedResource(PrototypePlayer player);
+}
+
+public class PrototypeBatteryFurniture : PrototypeGuaranteedResourceFurniture
+{
+    public override string Prompt => "Abriendo mueble de pilas";
+    protected override void SpawnGuaranteedResource(PrototypePlayer player)
+    {
+        Vector3 position = GetDropPosition(player);
+        GameObject pickup = SchoolEscapePrototype.CreateBox(
+            "Pila garantizada",
+            position,
+            new Vector3(.35f, .2f, .2f),
+            SchoolEscapePrototype.MakeMaterial(new Color(1f, .82f, .12f)),
+            false);
+        SchoolEscapePrototype.I.Register(pickup.AddComponent<PrototypeBatteryWorldPickup>());
+    }
+
+    private Vector3 GetDropPosition(PrototypePlayer player)
+    {
+        Vector3 direction = player != null ? player.transform.position - transform.position : transform.forward;
+        direction.y = 0f;
+        if (direction.sqrMagnitude < .01f) direction = transform.forward;
+        return transform.position + direction.normalized * .8f + Vector3.up * .3f;
+    }
+}
+
+public class PrototypeBandageFurniture : PrototypeGuaranteedResourceFurniture
+{
+    public override string Prompt => "Abriendo botiquín";
+    protected override void SpawnGuaranteedResource(PrototypePlayer player)
+    {
+        Vector3 direction = player != null ? player.transform.position - transform.position : transform.forward;
+        direction.y = 0f;
+        if (direction.sqrMagnitude < .01f) direction = transform.forward;
+        Vector3 position = transform.position + direction.normalized * .8f + Vector3.up * .3f;
+        GameObject pickup = SchoolEscapePrototype.CreateBox(
+            "Venda garantizada",
+            position,
+            new Vector3(.4f, .12f, .28f),
+            SchoolEscapePrototype.MakeMaterial(new Color(.86f, .95f, .92f)),
+            false);
+        SchoolEscapePrototype.I.Register(pickup.AddComponent<PrototypeBandageWorldPickup>());
+    }
+}
+
+public class PrototypeBatteryWorldPickup : PrototypeInteractable
+{
+    public override float Duration => .1f;
+    public override string Prompt => "Recogiendo pila";
+
+    public override void Complete(PrototypePlayer player)
+    {
+        SchoolEscapePrototype.I.AddBattery();
+        gameObject.SetActive(false);
+    }
+}
+
+public class PrototypeBandageWorldPickup : PrototypeInteractable
+{
+    public override float Duration => .1f;
+    public override string Prompt => "Recogiendo venda";
+
+    public override void Complete(PrototypePlayer player)
+    {
+        SchoolEscapePrototype.I.AddBandage();
         gameObject.SetActive(false);
     }
 }

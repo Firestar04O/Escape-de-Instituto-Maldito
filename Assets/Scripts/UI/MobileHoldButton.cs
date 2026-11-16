@@ -1,0 +1,17 @@
+using UnityEngine;
+using UnityEngine.EventSystems;
+
+namespace SchoolEscape.UI
+{
+    [DisallowMultipleComponent]
+    public sealed class MobileHoldButton : MonoBehaviour, IPointerDownHandler, IPointerUpHandler, IPointerExitHandler
+    {
+        public bool IsHeld { get; private set; }
+
+        public void OnPointerDown(PointerEventData eventData) => IsHeld = true;
+        public void OnPointerUp(PointerEventData eventData) => IsHeld = false;
+        public void OnPointerExit(PointerEventData eventData) => IsHeld = false;
+
+        private void OnDisable() => IsHeld = false;
+    }
+}
