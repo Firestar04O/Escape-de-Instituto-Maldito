@@ -36,7 +36,8 @@ namespace SchoolEscape.Rooms
             definition = roomDefinition;
             objective = roomObjective;
             exits.Clear();
-            exits.AddRange(roomExits);
+            foreach (RoomExitGate roomExit in roomExits)
+                if (roomExit != null) exits.Add(roomExit);
         }
 
         private void Awake()
@@ -58,7 +59,8 @@ namespace SchoolEscape.Rooms
         public void BeginRoom()
         {
             objective?.ResetObjective();
-            foreach (RoomExitGate exit in exits) exit.ResetGate();
+            foreach (RoomExitGate exit in exits)
+                if (exit != null) exit.ResetGate();
             SetState(RoomRuntimeState.Exploring);
         }
 
@@ -72,7 +74,8 @@ namespace SchoolEscape.Rooms
         private void HandleObjectiveStateChanged(RoomObjectiveState objectiveState)
         {
             if (objectiveState != RoomObjectiveState.Unlocked) return;
-            foreach (RoomExitGate exit in exits) exit.Unlock();
+            foreach (RoomExitGate exit in exits)
+                if (exit != null) exit.Unlock();
             SetState(RoomRuntimeState.ExitUnlocked);
         }
 

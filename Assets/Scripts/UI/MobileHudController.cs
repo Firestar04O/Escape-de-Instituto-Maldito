@@ -16,6 +16,7 @@ namespace SchoolEscape.UI
         [SerializeField] private Button bandageButton;
         [SerializeField] private Text statusText;
         [SerializeField] private Text allyText;
+        private Button boundBandageButton;
 
         public Vector2 MovementCenterScreen
         {
@@ -55,17 +56,18 @@ namespace SchoolEscape.UI
             bandageButton = bandage;
             statusText = status;
             allyText = ally;
+            BindBandageButton();
         }
 
         private void Awake()
         {
             if (session == null) session = FindFirstObjectByType<SchoolEscapePrototype>();
-            if (bandageButton != null) bandageButton.onClick.AddListener(UseBandage);
+            BindBandageButton();
         }
 
         private void OnDestroy()
         {
-            if (bandageButton != null) bandageButton.onClick.RemoveListener(UseBandage);
+            if (boundBandageButton != null) boundBandageButton.onClick.RemoveListener(UseBandage);
         }
 
         private void Update()
@@ -79,8 +81,10 @@ namespace SchoolEscape.UI
             if (statusText != null)
             {
                 int health = session.Player != null ? session.Player.Health : 0;
+                string interactionHint = session.Player != null ? $"\n{session.Player.InteractionStatus}" : "";
                 statusText.text = $"Vida {health}/3   Pilas {session.Batteries}/3   Venda {(session.Bandages > 0 ? "Sí" : "No")}\n" +
-                                  $"Salida {(session.HasKey ? "DESBLOQUEADA" : "bloqueada")}   Peligro x{session.DangerMultiplier:0.0}";
+                                  $"Salida {session.ExitStatusText}   Peligro x{session.DangerMultiplier:0.0}" +
+                                  interactionHint;
             }
 
             if (allyText != null && session.Ally != null)
@@ -88,6 +92,9 @@ namespace SchoolEscape.UI
                 string state = session.Ally.IsCaptive ? "RAPTADO" : session.Ally.IsDown ? "VULNERABLE" : $"{session.Ally.Health}/3";
                 allyText.text = "Compañero " + state;
             }
+
+            if (bandageButton != null)
+                bandageButton.interactable = true;
         }
 
         public Rect GetFlashButtonScreenRect()
@@ -101,6 +108,14 @@ namespace SchoolEscape.UI
         }
 
         private void UseBandage() => session?.UseBandage();
+
+        private void BindBandageButton()
+        {
+            if (boundBandageButton == bandageButton) return;
+            if (boundBandageButton != null) boundBandageButton.onClick.RemoveListener(UseBandage);
+            boundBandageButton = bandageButton;
+            if (boundBandageButton != null) boundBandageButton.onClick.AddListener(UseBandage);
+        }
 
         private bool IsInteractHeld()
         {

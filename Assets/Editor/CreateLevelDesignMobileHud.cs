@@ -48,7 +48,7 @@ public static class CreateLevelDesignMobileHud
 
         MobileHudController hud = canvasObject.AddComponent<MobileHudController>();
         Text status = CreateText(canvasObject.transform, "Status", "Vida 3/3   Pilas 2/3", 30, TextAnchor.UpperLeft);
-        SetTopLeftRect(status.rectTransform, new Vector2(30f, -30f), new Vector2(660f, 100f));
+        SetTopLeftRect(status.rectTransform, new Vector2(30f, -30f), new Vector2(760f, 160f));
 
         Text ally = CreateText(canvasObject.transform, "AllyStatus", "Compañero 3/3", 26, TextAnchor.UpperLeft);
         SetTopLeftRect(ally.rectTransform, new Vector2(30f, -135f), new Vector2(420f, 55f));
@@ -108,6 +108,7 @@ public static class CreateLevelDesignMobileHud
         text.fontSize = fontSize;
         text.alignment = alignment;
         text.color = Color.white;
+        text.raycastTarget = false;
         return text;
     }
 
@@ -131,9 +132,19 @@ public static class CreateLevelDesignMobileHud
 
     private static void FixExistingLayout(Transform hudRoot)
     {
+        for (int index = hudRoot.childCount - 1; index >= 0; index--)
+        {
+            Transform child = hudRoot.GetChild(index);
+            if (child.name != "BandageButton" && child.name.StartsWith("BandageButton (", System.StringComparison.Ordinal))
+                Object.DestroyImmediate(child.gameObject);
+        }
+
+        foreach (Text text in hudRoot.GetComponentsInChildren<Text>(true))
+            text.raycastTarget = false;
+
         Transform status = hudRoot.Find("Status");
         if (status != null)
-            SetTopLeftRect((RectTransform)status, new Vector2(30f, -30f), new Vector2(660f, 100f));
+            SetTopLeftRect((RectTransform)status, new Vector2(30f, -30f), new Vector2(760f, 160f));
 
         Transform ally = hudRoot.Find("AllyStatus");
         if (ally != null)

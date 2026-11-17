@@ -518,8 +518,8 @@ def build_document():
         ["Campo", "Definicion"],
         [
             ["Estado", "Documento de diseño consolidado para el MVP"],
-            ["Fecha", "15 de noviembre de 2026"],
-            ["Plataforma principal", "Android en orientacion horizontal"],
+            ["Fecha", "17 de noviembre de 2026"],
+            ["Plataforma principal", "Android API 25 o superior en orientacion horizontal fija"],
             ["Jugadores", "2 a 4 jugadores en linea"],
             ["Duracion objetivo", "5 a 15 minutos por partida"],
             ["Meta tecnica", "30 FPS estables en el dispositivo de referencia"],
@@ -565,13 +565,18 @@ def build_document():
             "Orientacion de pantalla: horizontal.",
             "Rendimiento inicial: 30 FPS estables.",
             "Dispositivo de referencia disponible: Honor Magic7 Lite.",
+            "Version minima configurada: Android 7.1, nivel de API 25.",
+            "Target SDK: automatico, resuelto por la version instalada del SDK de Android al compilar.",
+            "Presupuesto provisional por frame: 33.3 ms como maximo para sostener 30 FPS.",
+            "Presupuesto provisional de memoria: menos de 1 GB de uso pico durante una partida del MVP.",
+            "Prueba termica provisional: 15 minutos continuos sin caidas graves de rendimiento ni cierre de la aplicacion.",
             "Los controles principales deben funcionar mediante pantalla tactil. Teclado y raton se mantienen como soporte de desarrollo.",
             "La interfaz debe adaptarse a diferentes relaciones de aspecto horizontales sin tapar el espacio jugable.",
         ],
     )
     add_body(
         doc,
-        "La version minima de Android, resoluciones de prueba y presupuesto final de memoria se confirmaran mediante compilaciones reales en el dispositivo de referencia. Estos valores se documentaran antes de cerrar QA.",
+        "Los presupuestos de memoria y temperatura son limites preventivos estimados para el prototipo. Se reemplazaran por mediciones de Profiler y capturas del dispositivo cuando las seis salas, enemigos e interactuables esten integrados. La compilacion actual ya fue ejecutada satisfactoriamente en el Honor Magic7 Lite.",
     )
 
     add_heading(doc, "3 Alcance del MVP", 1)
@@ -581,8 +586,9 @@ def build_document():
         [
             "Partidas privadas para 2 a 4 jugadores reales.",
             "Creacion de partida y union mediante codigo.",
-            "Seis salas por partida como condicion de victoria provisional.",
-            "Aulas, cafeteria y un pasillo de riesgo y recompensa como arquetipos confirmados.",
+            "Seis salas por partida: Salon 1, Salon 2, Salon 3, Cafeteria 1, Cafeteria 2 y Cafeteria 3.",
+            "Los salones utilizan una palanca y las cafeterias utilizan tres palancas obligatorias.",
+            "Despues de completar las palancas, la puerta tarda inicialmente 8 segundos en abrirse y el Director aumenta temporalmente su actividad.",
             "Dos enemigos: Chiquito y Normal.",
             "Salud, estado vulnerable, arrastre, rapto, espectador y rescate posterior.",
             "Flash consumible, vendas, lockers, pickups y objetos soltados por jugadores.",
@@ -591,6 +597,7 @@ def build_document():
             "Señales rapidas para cooperar sin voz.",
             "Victoria perfecta, victoria parcial y derrota total.",
             "Desconexion y reconexion con un periodo de gracia de 90 segundos.",
+            "Estilo visual mixto: escenarios 3D con shaders y materiales, personajes, enemigos, objetos e items representados principalmente mediante elementos 2D.",
         ],
     )
     add_heading(doc, "3.2 Fuera de alcance", 2)
@@ -638,12 +645,12 @@ def build_document():
         "Los jugadores aparecen juntos y comienza una fase breve de calma.",
         "El equipo explora, abre lockers y administra sus recursos.",
         "El Director aumenta la actividad y asigna roles a los enemigos.",
-        "Un jugador localiza y activa el panel electrico de salida.",
-        "El servidor cambia el estado global a Salida desbloqueada y lo comunica a todos.",
-        "Los jugadores libres se reunen en la salida. Quien este siendo arrastrado cuenta como raptado al abandonar la sala.",
+        "El equipo localiza y activa la palanca del salon o las tres palancas de la cafeteria.",
+        "La puerta inicia una apertura de 8 segundos durante la cual el Director aumenta temporalmente la actividad.",
+        "Al terminar la cuenta, la puerta cambia al material abierto, deja de bloquear el paso y los jugadores libres cruzan la salida. Quien este siendo arrastrado cuenta como raptado al abandonar la sala.",
         "La siguiente sala aparece con una zona de rescate visible si existe algun cautivo recuperable.",
         "El ciclo se repite hasta completar seis salas.",
-        "Si todos son raptados, la partida termina en derrota.",
+        "Si todos son raptados, la partida termina en derrota y aparece un panel de resultado con las opciones Volver a jugar y Regresar al lobby.",
         "En la sexta sala, cada jugador puede escapar. Quienes escapen observan al resto hasta que se resuelva la partida.",
         "El resultado final distingue escape perfecto, escape parcial y derrota total, e incluye un memorial de los raptados.",
     ]
@@ -676,7 +683,7 @@ def build_document():
             "Un jugador liberado durante el arrastre vuelve con 1 corazon y 1.5 segundos de invulnerabilidad.",
             "La invulnerabilidad se comunica mediante parpadeo y bloquea daño y captura, pero no permite atravesar geometria.",
             "El jugador liberado conserva sus pilas y su venda.",
-            "Si todos los jugadores quedan raptados, se muestra Game Over y la partida puede reiniciarse.",
+            "Si todos los jugadores quedan raptados, se muestra Game Over con las opciones Volver a jugar y Regresar al lobby.",
         ],
     )
 
@@ -703,17 +710,17 @@ def build_document():
     add_heading(doc, "8 Objetivo de sala y salida", 1)
     add_body(
         doc,
-        "La llave fisica se sustituye por un panel electrico de emergencia. El panel puede representarse como caja de fusibles, consola de seguridad o palanca industrial, pero utiliza la misma logica. Su ubicacion se elige entre puntos configurados para cada sala.",
+        "La llave fisica se sustituye por palancas electricas de emergencia. Los salones requieren una palanca y las cafeterias requieren activar tres. Su ubicacion se elige entre puntos configurados para cada variante de sala.",
     )
     add_bullets(
         doc,
         [
-            "La salida comienza bloqueada y con una señal visual roja; el panel requiere una interaccion canalizada de 1.5 segundos.",
-            "El panel solo puede activarse una vez.",
-            "El servidor valida distancia, estado del jugador y disponibilidad del panel.",
-            "Al completarse, el estado global cambia a Salida desbloqueada.",
-            "La puerta cambia a verde y se reproduce una notificacion para todo el equipo.",
-            "La activacion genera actividad para el Director y puede iniciar una ultima fase de presion.",
+            "La salida comienza bloqueada y utiliza el material de puerta cerrada; cada palanca requiere una interaccion canalizada de 1.5 segundos.",
+            "Cada palanca solo puede activarse una vez y el HUD informa cuantas faltan.",
+            "El servidor valida distancia, estado del jugador y disponibilidad de cada palanca.",
+            "Al completar todas las palancas requeridas, comienza una espera inicial configurable de 8 segundos.",
+            "Durante la espera el Director aumenta temporalmente la actividad y el HUD muestra la cuenta regresiva.",
+            "Al terminar, la puerta aplica el material de puerta abierta, desactiva su colision y permite completar la sala al cruzarla, sin exigir otra pulsacion tactil.",
         ],
     )
 
@@ -801,14 +808,14 @@ def build_document():
     add_heading(doc, "11 Diseño de salas y progresion", 1)
     add_body(
         doc,
-        "Una partida del MVP contiene seis salas. Se construiran modulos con variantes de mobiliario, panel, lockers, portales e iluminacion para reducir repeticion sin producir nueve mapas completamente independientes.",
+        "Una partida del MVP contiene seis salas. Los tres salones y las tres cafeterias reutilizan reglas y componentes, pero varian recorridos, mobiliario, palancas, lockers, portales e iluminacion.",
     )
     add_table(
         doc,
         ["Grupo", "Objetivo de contenido"],
         [
-            ["Tres salas pequeñas", "Aulas y un pasillo de riesgo y recompensa."],
-            ["Tres salas grandes", "Cafeteria, aula grande y una variante amplia por confirmar."],
+            ["Tres salones", "Salon 1, Salon 2 y Salon 3; cada uno utiliza una palanca."],
+            ["Tres cafeterias", "Cafeteria 1, Cafeteria 2 y Cafeteria 3; cada una utiliza tres palancas."],
             ["Variante de rescate", "Zona visible y cerrada que puede integrarse en una sala grande."],
         ],
         widths=[2.0, 4.6],
@@ -817,11 +824,10 @@ def build_document():
         doc,
         [
             "Los mapas son espacios abiertos para esquivar, rodear y atraer enemigos.",
-            "Cada sala contiene entrada, salida, panel, cobertura, lockers, pickups y puntos de aparicion.",
+            "Cada sala contiene spawns, salida, palancas, cobertura, lockers, pickups y puntos de aparicion. La entrada no necesita representacion visual en el prototipo.",
             "La ubicacion y activacion de elementos cambia entre configuraciones del mismo modulo.",
-            "El pasillo contiene mas lockers, pocas rutas de escape y mayor riesgo de acorralamiento.",
             "Las rutas, atajos, cuellos de botella y zonas sin aparicion deben documentarse en Miro antes de construir la escena final.",
-            "La primera sala de referencia para implementacion sera Aula A.",
+            "Cafeteria 1 funciona como base tecnica para Cafeteria 2 y Cafeteria 3.",
         ],
     )
 
@@ -902,6 +908,8 @@ def build_document():
             ["Flash por pila", "1", "Confirmado para MVP"],
             ["Stun enemigo Normal", "1.2 segundos", "Base del prototipo"],
             ["Activacion del panel", "1.5 segundos", "Valor inicial"],
+            ["Apertura de la puerta", "8 segundos", "Estimacion configurable para PlayMode"],
+            ["Aumento durante apertura", "+1.25 al multiplicador de peligro", "Estimacion configurable"],
             ["Apertura de locker", "2 segundos", "Valor inicial"],
             ["Invulnerabilidad al liberar", "1.5 segundos", "Valor inicial"],
             ["Reconexión", "90 segundos", "Confirmado para MVP"],
@@ -941,9 +949,68 @@ def build_document():
             "El jugador puede abrir lockers, recoger, usar, soltar y compartir recursos.",
             "Los estados vulnerable, arrastrado, raptado y liberado son visibles y sincronizados.",
             "El Director alterna fases de ritmo y aumenta la presion al acumular cautivos.",
+            "Al producirse una derrota, el panel de resultado permite iniciar otra partida o regresar al lobby.",
             "El juego mantiene 30 FPS estables en el dispositivo Android de referencia durante la captura de prueba acordada.",
             "Cada requisito funcional dispone de una tarjeta de implementacion y una prueba de aceptacion asociada.",
         ],
+    )
+
+    add_heading(doc, "18.1 Matriz de requisitos del MVP", 2)
+    add_body(
+        doc,
+        "El estado [x] indica que existe una implementacion o decision documentada. El estado [ ] indica trabajo pendiente. Una implementacion marcada sigue necesitando ejecutar su prueba manual antes de cerrar QA.",
+    )
+    add_table(
+        doc,
+        ["Codigo", "Estado", "Requisito", "Prueba de aceptacion"],
+        [
+            ["PLAT-01", "[x]", "Compilar y ejecutar en Android horizontal.", "Abrir la APK en el Honor Magic7 Lite."],
+            ["PLAT-02", "[x]", "Usar Android minimo API 25 y target SDK automatico.", "Revisar Player Settings y el manifiesto de la compilacion."],
+            ["PERF-01", "[x]", "Mantener como objetivo 30 FPS y 33.3 ms por frame.", "Jugar 15 minutos en el dispositivo sin caidas graves."],
+            ["SCOPE-01", "[x]", "Limitar el MVP a tres salones y tres cafeterias.", "La lista de contenido contiene exactamente seis salas."],
+            ["FLOW-01", "[x]", "Documentar el flujo completo desde lobby hasta resultado.", "Recorrer los pasos de la seccion 5 sin contradicciones."],
+            ["ARCH-01", "[x]", "Separar jugador, enemigos, inventario, salas, UI e interactuables.", "Los sistemas principales existen en componentes distintos."],
+            ["ROOM-01", "[x]", "Disponer de Salon 1, Salon 2 y Salon 3 diseñados y probados.", "Recorrer cada salon sin atravesar ni quedar atrapado en geometria."],
+            ["ROOM-02", "[x]", "Usar Cafeteria 1 como plantilla funcional.", "Validar spawns, palancas, salida e interactuables de Cafeteria 1."],
+            ["ROOM-03", "[ ]", "Integrar Cafeteria 2 y Cafeteria 3 en Unity.", "Abrir y completar ambas variantes desde el proyecto."],
+            ["OBJ-01", "[x]", "Requerir una palanca en cada salon.", "Activar la palanca y observar el inicio de apertura."],
+            ["OBJ-02", "[x]", "Requerir las tres palancas en cada cafeteria.", "Confirmar que una o dos no bastan y que la tercera inicia la apertura."],
+            ["OBJ-03", "[x]", "Esperar 8 segundos con mayor peligro antes de abrir la salida.", "Comprobar cuenta, presion temporal, material y colision de la puerta."],
+            ["MOVE-01", "[x]", "Mantener velocidad constante en movimiento cardinal y diagonal.", "Comparar recorridos rectos y diagonales durante el mismo tiempo."],
+            ["COL-01", "[x]", "Evitar atravesamientos y enganches aparentes en los mapas actuales.", "Recorrer paredes, muebles, esquinas y puertas en PC y telefono."],
+            ["CAP-01", "[x]", "Ocultar al aliado cuando es raptado.", "Dejar que llegue al portal y comprobar que ya no se renderiza."],
+            ["INV-01", "[x]", "Permitir usar una venda con vida incompleta.", "Recibir daño, recoger una venda y recuperar tres corazones."],
+            ["UI-01", "[x]", "Mostrar joystick, flash, interaccion, venda, objetivo y peligro.", "Verificar todos los controles en MobileHUD."],
+            ["UI-02", "[x]", "Bloquear la aplicacion en horizontal para evitar rotacion ciclica.", "Sostener el telefono vertical y confirmar que la vista no alterna."],
+            ["ART-01", "[x]", "Definir personajes, paredes, mobiliario y estilo 2D en Miro.", "Adjuntar el tablero o capturas como anexo del GDD."],
+            ["ART-02", "[ ]", "Aplicar el estilo final a salas, muebles, items, jugadores y zombis.", "Revisar una sala modelo completa y legible."],
+            ["SESSION-01", "[ ]", "Encadenar las seis salas en una partida.", "Completar seis transiciones y mostrar el resultado final."],
+            ["NET-01", "[ ]", "Sincronizar reglas principales para dos a cuatro jugadores.", "Completar una partida de dos jugadores por Internet."],
+        ],
+        widths=[0.8, 0.65, 3.0, 2.15],
+        center_cols=[0, 1],
+    )
+
+    add_heading(doc, "18.2 Lista de pruebas manuales", 2)
+    add_table(
+        doc,
+        ["Prueba", "Plataforma", "Accion", "Resultado aprobado"],
+        [
+            ["QA-01", "PC y telefono", "Recorrer paredes, esquinas, muebles y puertas.", "No atraviesa ni queda enganchado."],
+            ["QA-02", "PC y telefono", "Moverse el mismo tiempo en recto y diagonal.", "La velocidad percibida permanece constante."],
+            ["QA-03", "Telefono", "Moverse mientras se apunta y dispara el flash.", "Los dos dedos se reconocen sin perder el joystick."],
+            ["QA-04", "Telefono", "Recibir daño, recoger y usar una venda.", "La vida vuelve a tres y la venda se consume."],
+            ["QA-05", "PC y telefono", "Permitir que el aliado sea llevado al portal.", "El aliado desaparece y aumenta el peligro."],
+            ["QA-06", "PC y telefono", "Activar una palanca en un salon.", "Comienza la apertura de la puerta."],
+            ["QA-07", "PC y telefono", "Activar una y dos palancas en una cafeteria.", "La salida permanece bloqueada."],
+            ["QA-08", "PC y telefono", "Activar la tercera palanca.", "Inicia una cuenta de 8 segundos y aumenta el peligro."],
+            ["QA-09", "PC y telefono", "Esperar la cuenta junto a la salida.", "Cambia a PuertaAbierta, desaparece la colision y se puede cruzar."],
+            ["QA-10", "Telefono", "Sostener el dispositivo vertical y girarlo levemente.", "La pantalla permanece en una sola orientacion horizontal."],
+            ["QA-11", "Telefono", "Jugar 15 minutos seguidos.", "No hay cierre, sobrecalentamiento grave ni degradacion evidente."],
+            ["QA-12", "Unity", "Validar cada prefab de sala.", "No hay scripts perdidos, referencias nulas ni salidas sin configurar."],
+        ],
+        widths=[0.8, 1.1, 2.7, 2.0],
+        center_cols=[0, 1],
     )
 
     add_heading(doc, "19 Mejoras futuras", 1)
@@ -987,11 +1054,10 @@ def build_document():
     add_bullets(
         doc,
         [
-            "Version minima de Android y conjunto de resoluciones de aceptacion.",
+            "Conjunto final de resoluciones y relaciones de aspecto de aceptacion.",
             "Comportamiento de la sesion si el Host se desconecta.",
             "Duracion exacta de calma, recuperacion y apertura de la zona de rescate.",
             "Alcance, apertura y cooldown final del flash.",
-            "Catalogo definitivo de las tres salas grandes.",
             "Formula y limites del peligro base y de la actividad reciente.",
             "Presupuesto final de enemigos, objetos de red, memoria y bateria.",
         ],

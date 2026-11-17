@@ -9,27 +9,41 @@ using Touch = UnityEngine.InputSystem.EnhancedTouch.Touch;
 
 public class SchoolEscapePrototype : MonoBehaviour
 {
-    public static SchoolEscapePrototype I { get; private set; }
-
     public PrototypePlayer Player { get; private set; }
     public PrototypeAlly Ally { get; private set; }
 
     public bool HasKey { get; private set; }
     public bool Victory { get; private set; }
-    public int Batteries { get; private set; } = 2;
-    public int Bandages { get; private set; }
+    public int Batteries => inventory.Batteries;
+    public int Bandages => inventory.Bandages;
     public float RunTime { get; private set; }
-    public float DangerMultiplier => 1f + RunTime / 80f + (Ally != null && Ally.IsCaptive ? 1.5f : 0f);
+    public float DangerMultiplier => 1f + RunTime / 80f + (Ally != null && Ally.IsCaptive ? 1.5f : 0f) + (exitOpening ? 1.25f : 0f);
+    public bool CanUseBandage => Bandages > 0 && Player != null && !Player.IsCaptive && !Player.IsDown && Player.Dragger == null && Player.Health < 3;
+    public bool IsExitOpening => exitOpening;
+    public float ExitOpeningRemaining => exitOpening ? Mathf.Max(0f, exitOpeningEndsAt - Time.time) : 0f;
+    public string ExitStatusText => HasKey ? "ABIERTA" : exitOpening ? $"ABRIENDO {Mathf.CeilToInt(ExitOpeningRemaining)}s" : "bloqueada";
     public MobileHudController MobileHud { get; private set; }
 
     private readonly List<PrototypeEnemy> enemies = new List<PrototypeEnemy>();
     private readonly List<PrototypeInteractable> interactables = new List<PrototypeInteractable>();
+    private readonly HashSet<PrototypeExitPanel> activatedExitPanels = new HashSet<PrototypeExitPanel>();
+    private readonly PrototypeInventory inventory = new PrototypeInventory();
     private Material floorMaterial;
     private Material wallMaterial;
     private Material furnitureMaterial;
     private SchoolRoomDefinition authoredRoom;
+    private int requiredExitPanelCount = 1;
     private readonly List<Vector3> activeEnemySpawnPoints = new List<Vector3>();
     private float spawnTimer = 10f;
+    private const float ExitOpeningDuration = 8f;
+    private const float OrientationThreshold = .72f;
+    private const float OrientationDominance = .18f;
+    private const float OrientationStableDuration = .6f;
+    private bool exitOpening;
+    private float exitOpeningEndsAt;
+    private ScreenOrientation orientationCandidate = ScreenOrientation.LandscapeLeft;
+    private float orientationCandidateSince;
+    private float nextOrientationChangeTime;
     private string message = "Encuentra la llave y escapa";
     private float messageUntil = 4f;
     private GUIStyle titleStyle;
@@ -52,9 +66,11 @@ public class SchoolEscapePrototype : MonoBehaviour
 
     private void Awake()
     {
-        I = this;
         MobileHud = FindFirstObjectByType<MobileHudController>();
         ConfigureMobileOrientation();
+        ConfigurePerformanceBudget();
+        if (Accelerometer.current != null)
+            InputSystem.EnableDevice(Accelerometer.current);
         EnhancedTouchSupport.Enable();
         BuildPrototype();
     }
@@ -63,19 +79,28 @@ public class SchoolEscapePrototype : MonoBehaviour
     {
         Screen.autorotateToPortrait = false;
         Screen.autorotateToPortraitUpsideDown = false;
-        Screen.autorotateToLandscapeLeft = true;
-        Screen.autorotateToLandscapeRight = true;
-        Screen.orientation = ScreenOrientation.AutoRotation;
+        Screen.autorotateToLandscapeLeft = false;
+        Screen.autorotateToLandscapeRight = false;
+        Screen.orientation = ScreenOrientation.LandscapeLeft;
+    }
+
+    private static void ConfigurePerformanceBudget()
+    {
+#if UNITY_ANDROID || UNITY_IOS
+        QualitySettings.vSyncCount = 0;
+        Application.targetFrameRate = 30;
+#endif
     }
 
     private void OnDestroy()
     {
-        if (I == this) I = null;
         EnhancedTouchSupport.Disable();
     }
 
     private void Update()
     {
+        UpdateLandscapeOrientation();
+
         if (Keyboard.current != null && Keyboard.current.rKey.wasPressedThisFrame)
             Restart();
 
@@ -88,6 +113,39 @@ public class SchoolEscapePrototype : MonoBehaviour
             SpawnEnemy(Random.value < 0.58f);
             spawnTimer = Mathf.Max(3.5f, 10f / DangerMultiplier);
         }
+    }
+
+    private void UpdateLandscapeOrientation()
+    {
+#if UNITY_ANDROID || UNITY_IOS
+        Accelerometer accelerometer = Accelerometer.current;
+        if (accelerometer == null || Time.unscaledTime < nextOrientationChangeTime) return;
+
+        Vector3 acceleration = accelerometer.acceleration.ReadValue();
+        float horizontal = Mathf.Abs(acceleration.x);
+        float vertical = Mathf.Abs(acceleration.y);
+        if (horizontal < OrientationThreshold || horizontal < vertical + OrientationDominance)
+        {
+            orientationCandidateSince = Time.unscaledTime;
+            return;
+        }
+
+        ScreenOrientation desired = acceleration.x < 0f
+            ? ScreenOrientation.LandscapeRight
+            : ScreenOrientation.LandscapeLeft;
+        if (desired != orientationCandidate)
+        {
+            orientationCandidate = desired;
+            orientationCandidateSince = Time.unscaledTime;
+            return;
+        }
+
+        if (Screen.orientation == desired || Time.unscaledTime - orientationCandidateSince < OrientationStableDuration)
+            return;
+
+        Screen.orientation = desired;
+        nextOrientationChangeTime = Time.unscaledTime + 1.2f;
+#endif
     }
 
     private void BuildPrototype()
@@ -161,7 +219,9 @@ public class SchoolEscapePrototype : MonoBehaviour
         }
 
         Player = CreateCapsule("Jugador", new Vector3(0f, 1f, -7f), new Color(.18f, .52f, 1f)).AddComponent<PrototypePlayer>();
+        Player.Initialize(this);
         Ally = CreateCapsule("Compañero", new Vector3(1.6f, 1f, -6.4f), new Color(.25f, .9f, .38f)).AddComponent<PrototypeAlly>();
+        Ally.Initialize(this);
 
         SpawnEnemy(true);
         SpawnEnemy(false);
@@ -173,7 +233,7 @@ public class SchoolEscapePrototype : MonoBehaviour
         camera.clearFlags = CameraClearFlags.SolidColor;
         camera.backgroundColor = new Color(.025f, .03f, .045f);
         cameraObject.AddComponent<AudioListener>();
-        cameraObject.AddComponent<PrototypeCamera>();
+        cameraObject.AddComponent<PrototypeCamera>().Initialize(this);
 
         GameObject lightObject = new GameObject("Moon Light");
         Light light = lightObject.AddComponent<Light>();
@@ -203,7 +263,9 @@ public class SchoolEscapePrototype : MonoBehaviour
         Vector3 allyPosition = allySpawn != null ? allySpawn.position + Vector3.up : playerPosition + Vector3.right * 1.7f;
 
         Player = CreateCapsule("Jugador", playerPosition, new Color(.18f, .52f, 1f)).AddComponent<PrototypePlayer>();
+        Player.Initialize(this);
         Ally = CreateCapsule("Compañero de prueba", allyPosition, new Color(.25f, .9f, .38f)).AddComponent<PrototypeAlly>();
+        Ally.Initialize(this);
 
         if (activeEnemySpawnPoints.Count > 0)
         {
@@ -221,10 +283,14 @@ public class SchoolEscapePrototype : MonoBehaviour
         }
 
         camera.fieldOfView = 48f;
-        if (camera.GetComponent<PrototypeCamera>() == null)
-            camera.gameObject.AddComponent<PrototypeCamera>();
+        PrototypeCamera cameraController = camera.GetComponent<PrototypeCamera>();
+        if (cameraController == null) cameraController = camera.gameObject.AddComponent<PrototypeCamera>();
+        cameraController.Initialize(this);
 
-        ShowMessage("Activa el panel eléctrico y llega a la salida", 5f);
+        string objectiveMessage = requiredExitPanelCount == 1
+            ? "Activa la palanca y llega a la salida"
+            : $"Activa las {requiredExitPanelCount} palancas y llega a la salida";
+        ShowMessage(objectiveMessage, 5f);
     }
 
     private void RegisterAuthoredInteractables()
@@ -233,11 +299,23 @@ public class SchoolEscapePrototype : MonoBehaviour
         RegisterChildrenAs<PrototypeBatteryFurniture>(authoredRoom.GuaranteedBatteryRoot);
         RegisterChildrenAs<PrototypeBandageFurniture>(authoredRoom.GuaranteedBandageRoot);
 
-        if (authoredRoom.ExitPanel != null)
+        activatedExitPanels.Clear();
+        requiredExitPanelCount = 0;
+        foreach (Transform exitPanel in authoredRoom.ExitPanels)
+        {
+            if (exitPanel == null) continue;
+            PrototypeExitPanel panel = exitPanel.GetComponent<PrototypeExitPanel>();
+            if (panel == null) panel = exitPanel.gameObject.AddComponent<PrototypeExitPanel>();
+            Register(panel);
+            requiredExitPanelCount++;
+        }
+
+        if (requiredExitPanelCount == 0 && authoredRoom.ExitPanel != null)
         {
             PrototypeExitPanel panel = authoredRoom.ExitPanel.GetComponent<PrototypeExitPanel>();
             if (panel == null) panel = authoredRoom.ExitPanel.gameObject.AddComponent<PrototypeExitPanel>();
             Register(panel);
+            requiredExitPanelCount = 1;
         }
 
         foreach (Transform exit in authoredRoom.Exits)
@@ -266,12 +344,18 @@ public class SchoolEscapePrototype : MonoBehaviour
         GameObject enemy = CreateCapsule(small ? "Cultista chico" : "Cultista normal", spawnPoint, small ? new Color(.95f, .25f, .15f) : new Color(.62f, .08f, .09f));
         enemy.transform.localScale = small ? new Vector3(.72f, .72f, .72f) : new Vector3(1.15f, 1.15f, 1.15f);
         PrototypeEnemy controller = enemy.AddComponent<PrototypeEnemy>();
+        controller.Initialize(this);
         controller.IsSmall = small;
         enemies.Add(controller);
     }
 
     public void UnregisterEnemy(PrototypeEnemy enemy) => enemies.Remove(enemy);
-    public void Register(PrototypeInteractable interactable) => interactables.Add(interactable);
+    public void Register(PrototypeInteractable interactable)
+    {
+        if (interactable == null) return;
+        interactable.Initialize(this);
+        interactables.Add(interactable);
+    }
 
     private Vector3 GetRandomEnemySpawn()
     {
@@ -302,7 +386,7 @@ public class SchoolEscapePrototype : MonoBehaviour
         foreach (PrototypeInteractable item in interactables)
         {
             if (item == null || !item.Available) continue;
-            float distance = Vector3.Distance(position, item.transform.position);
+            float distance = item.DistanceOnFloorFrom(position);
             if (distance < bestDistance)
             {
                 bestDistance = distance;
@@ -310,9 +394,11 @@ public class SchoolEscapePrototype : MonoBehaviour
             }
         }
 
-        if (Ally != null && (Ally.IsDown || Ally.IsCaptive))
+        if (Ally != null && Ally.RescueInteraction != null && Ally.RescueInteraction.Available)
         {
-            float distance = Vector3.Distance(position, Ally.transform.position);
+            Vector3 allyPosition = Ally.transform.position;
+            allyPosition.y = position.y;
+            float distance = Vector3.Distance(position, allyPosition);
             if (distance < bestDistance)
                 return Ally.RescueInteraction;
         }
@@ -327,39 +413,104 @@ public class SchoolEscapePrototype : MonoBehaviour
 
     public void UnlockExit()
     {
+        exitOpening = false;
         HasKey = true;
         if (authoredRoom != null)
+        {
             authoredRoom.GetComponent<RoomObjectiveController>()?.UnlockImmediately();
-        ShowMessage("Salida desbloqueada. Reúnanse en la puerta.", 4f);
+            foreach (Transform exit in authoredRoom.Exits)
+                exit?.GetComponent<RoomExitGate>()?.Unlock();
+        }
+        ShowMessage("La puerta terminó de abrirse. Cruza la salida.", 4f);
+    }
+
+    public void ActivateExitPanel(PrototypeExitPanel panel)
+    {
+        if (panel == null || !activatedExitPanels.Add(panel)) return;
+
+        int required = Mathf.Max(1, requiredExitPanelCount);
+        if (activatedExitPanels.Count < required)
+        {
+            ShowMessage($"Palancas activadas: {activatedExitPanels.Count}/{required}", 3f);
+            return;
+        }
+
+        BeginExitOpening();
+    }
+
+    private void BeginExitOpening()
+    {
+        if (HasKey || exitOpening) return;
+
+        exitOpening = true;
+        exitOpeningEndsAt = Time.time + ExitOpeningDuration;
+        if (authoredRoom != null)
+        {
+            foreach (Transform exit in authoredRoom.Exits)
+                exit?.GetComponent<RoomExitGate>()?.BeginOpening();
+        }
+
+        ShowMessage($"Palancas completas. La puerta se abrirá en {ExitOpeningDuration:0} segundos. ¡Resiste!", 3f);
+        StartCoroutine(CompleteExitOpeningAfterDelay());
+    }
+
+    private IEnumerator CompleteExitOpeningAfterDelay()
+    {
+        int previousSecond = -1;
+        while (Time.time < exitOpeningEndsAt)
+        {
+            int remaining = Mathf.CeilToInt(exitOpeningEndsAt - Time.time);
+            if (remaining != previousSecond)
+            {
+                previousSecond = remaining;
+                ShowMessage($"Puerta abriéndose: {remaining}s. Peligro aumentado.", 1.05f);
+            }
+            yield return null;
+        }
+
+        UnlockExit();
     }
 
     public void AddBattery()
     {
-        Batteries = Mathf.Min(3, Batteries + 1);
+        inventory.AddBattery();
         ShowMessage("Pila recogida", 2f);
     }
 
     public void AddBandage()
     {
-        Bandages = 1;
+        inventory.AddBandage();
         ShowMessage("Venda recogida", 2f);
     }
 
     public bool UseBattery()
     {
-        if (Batteries <= 0)
+        if (!inventory.TryUseBattery())
         {
             ShowMessage("Sin pilas", 2f);
             return false;
         }
-        Batteries--;
         return true;
     }
 
     public bool UseBandage()
     {
-        if (Bandages <= 0 || Player == null || Player.Health >= 3) return false;
-        Bandages--;
+        if (Bandages <= 0)
+        {
+            ShowMessage("No tienes vendas", 2f);
+            return false;
+        }
+        if (Player == null || Player.IsCaptive || Player.IsDown || Player.Dragger != null)
+        {
+            ShowMessage("No puedes usar una venda en este estado", 2f);
+            return false;
+        }
+        if (Player.Health >= 3)
+        {
+            ShowMessage("Tu vida ya está completa", 2f);
+            return false;
+        }
+        if (!inventory.TryUseBandage()) return false;
         Player.HealFull();
         ShowMessage("Salud restaurada", 2f);
         return true;
@@ -395,9 +546,10 @@ public class SchoolEscapePrototype : MonoBehaviour
         enemies.Clear();
         interactables.Clear();
         HasKey = false;
+        exitOpening = false;
+        exitOpeningEndsAt = 0f;
         Victory = false;
-        Batteries = 2;
-        Bandages = 0;
+        inventory.Reset();
         RunTime = 0f;
         spawnTimer = 10f;
         message = "Encuentra la llave y escapa";
@@ -416,7 +568,7 @@ public class SchoolEscapePrototype : MonoBehaviour
 
         GUI.Box(new Rect(18, 16, 310, 118), "");
         GUI.Label(new Rect(32, 25, 290, 32), "SCHOOL ESCAPE: CULT NIGHT", titleStyle);
-        GUI.Label(new Rect(32, 55, 280, 74), $"Vida: {Hearts(Player != null ? Player.Health : 0)}   Pilas: {Batteries}/3   Venda: {(Bandages > 0 ? "Sí" : "No")}\nSalida: {(HasKey ? "DESBLOQUEADA" : "bloqueada")}   Peligro: x{DangerMultiplier:0.0}", bodyStyle);
+        GUI.Label(new Rect(32, 55, 280, 74), $"Vida: {Hearts(Player != null ? Player.Health : 0)}   Pilas: {Batteries}/3   Venda: {(Bandages > 0 ? "Sí" : "No")}\nSalida: {ExitStatusText}   Peligro: x{DangerMultiplier:0.0}", bodyStyle);
 
         if (Ally != null)
         {
@@ -454,10 +606,10 @@ public class SchoolEscapePrototype : MonoBehaviour
 
     private static string Hearts(int amount) => amount <= 0 ? "♡♡♡" : new string('♥', amount) + new string('♡', 3 - amount);
 
-    public static Rect FlashButtonScreenRect()
+    public Rect FlashButtonScreenRect()
     {
-        if (I != null && I.MobileHud != null)
-            return I.MobileHud.GetFlashButtonScreenRect();
+        if (MobileHud != null)
+            return MobileHud.GetFlashButtonScreenRect();
         float scale = Mathf.Clamp(Screen.width / 1000f, .72f, 1.35f);
         return new Rect(Screen.width - 155f * scale, Screen.height - 145f * scale, 130f * scale, 55f * scale);
     }
@@ -494,736 +646,5 @@ public class SchoolEscapePrototype : MonoBehaviour
         controller.radius = .45f;
         controller.center = Vector3.zero;
         return go;
-    }
-}
-
-public abstract class PrototypeActor : MonoBehaviour
-{
-    public int Health { get; protected set; } = 3;
-    public bool IsDown => Health <= 0;
-    public bool IsCaptive { get; protected set; }
-    public PrototypeEnemy Dragger { get; private set; }
-    public bool CanBeDragged => IsDown && !IsCaptive && Dragger == null;
-    protected CharacterController Controller;
-    private float nextDamageTime;
-
-    protected virtual void Awake() => Controller = GetComponent<CharacterController>();
-
-    public virtual void Damage(int amount)
-    {
-        if (Time.time < nextDamageTime || IsDown) return;
-        nextDamageTime = Time.time + 1f;
-        Health = Mathf.Max(0, Health - amount);
-        if (IsDown) OnDowned();
-    }
-
-    protected virtual void OnDowned() { }
-    public void HealFull() => Health = 3;
-
-    public virtual bool StartDrag(PrototypeEnemy enemy)
-    {
-        if (!CanBeDragged) return false;
-        Dragger = enemy;
-        if (Controller != null) Controller.enabled = false;
-        return true;
-    }
-
-    public void DragTo(Vector3 position, Vector3 draggerForward)
-    {
-        draggerForward.y = 0f;
-        if (draggerForward.sqrMagnitude < .01f) draggerForward = Vector3.forward;
-        transform.position = position - draggerForward.normalized * .65f;
-    }
-
-    public virtual void Captured(Vector3 spawnPosition)
-    {
-        IsCaptive = true;
-        Dragger = null;
-        transform.position = spawnPosition + Vector3.up * .2f;
-    }
-
-    public void ReleaseFromDrag()
-    {
-        PrototypeEnemy previousDragger = Dragger;
-        if (previousDragger != null)
-            transform.position = FindSafeReleasePosition(previousDragger);
-
-        Dragger = null;
-        previousDragger?.StopDragging(this);
-        if (Controller != null) Controller.enabled = true;
-    }
-
-    public virtual void RescueFromDrag()
-    {
-        ReleaseFromDrag();
-        Health = 1;
-        nextDamageTime = Time.time + 1.5f;
-    }
-
-    private Vector3 FindSafeReleasePosition(PrototypeEnemy dragger)
-    {
-        Vector3 forward = dragger.transform.forward;
-        forward.y = 0f;
-        if (forward.sqrMagnitude < .01f) forward = Vector3.forward;
-        forward.Normalize();
-        Vector3 right = Vector3.Cross(Vector3.up, forward);
-        Vector3 origin = dragger.transform.position;
-        Vector3[] candidates =
-        {
-            origin - forward * 1.15f,
-            origin + right * 1.15f,
-            origin - right * 1.15f,
-            origin + forward * 1.15f,
-            origin
-        };
-
-        foreach (Vector3 candidate in candidates)
-        {
-            Vector3 bottom = candidate + Vector3.up * .45f;
-            Vector3 top = candidate + Vector3.up * 1.45f;
-            Collider[] overlaps = Physics.OverlapCapsule(bottom, top, .38f, ~0, QueryTriggerInteraction.Ignore);
-            bool blocked = false;
-            foreach (Collider overlap in overlaps)
-            {
-                if (overlap == null || overlap.gameObject == gameObject || overlap.gameObject == dragger.gameObject)
-                    continue;
-                blocked = true;
-                break;
-            }
-
-            if (!blocked) return candidate;
-        }
-
-        return origin;
-    }
-
-    public virtual void Rescue()
-    {
-        IsCaptive = false;
-        ReleaseFromDrag();
-        Health = 1;
-    }
-
-    protected void Move(Vector3 velocity)
-    {
-        if (Controller != null && Controller.enabled)
-            Controller.Move(velocity * Time.deltaTime);
-    }
-}
-
-public class PrototypePlayer : PrototypeActor
-{
-    public Vector3 Facing { get; private set; } = Vector3.forward;
-    public bool IsAimingFlash => aimingFlash;
-    private const float Speed = 5.8f;
-    private const float MovementDeadZone = .08f;
-    private bool interactPulse;
-    private float flashCooldown;
-    private PrototypeInteractable currentInteraction;
-    private float interactionProgress;
-    private int moveFinger = -1;
-    private bool aimingFlash;
-    private bool flashUsesMouse;
-    private bool manualFlashAim;
-    private int flashFinger = -1;
-    private Vector2 flashPressPosition;
-    private Vector2 flashCurrentPosition;
-    private GameObject aimIndicator;
-
-    private void Update()
-    {
-        if (SchoolEscapePrototype.I == null || IsDown || SchoolEscapePrototype.I.Victory) return;
-
-        Vector2 move = ReadMove();
-        Vector3 worldMove = new Vector3(move.x, 0f, move.y);
-        if (worldMove.sqrMagnitude > MovementDeadZone * MovementDeadZone)
-        {
-            worldMove.Normalize();
-            Facing = worldMove;
-        }
-        else
-        {
-            worldMove = Vector3.zero;
-        }
-        Move(worldMove * Speed);
-
-        UpdateFlashButtonInput();
-        if (!aimingFlash) ReadAim();
-        if (transform.forward != Facing)
-            transform.rotation = Quaternion.Slerp(transform.rotation, Quaternion.LookRotation(Facing), Time.deltaTime * 14f);
-
-        flashCooldown -= Time.deltaTime;
-        bool keyboardFlash = Keyboard.current != null && Keyboard.current.spaceKey.wasPressedThisFrame;
-        if (keyboardFlash) FireAutoFlash();
-
-        if (Keyboard.current != null && Keyboard.current.bKey.wasPressedThisFrame)
-            SchoolEscapePrototype.I.UseBandage();
-
-        bool interacting = interactPulse || (Keyboard.current != null && Keyboard.current.eKey.isPressed);
-        interactPulse = false;
-        UpdateInteraction(interacting);
-    }
-
-    public void RequestFlash() => FireAutoFlash();
-    public void PulseInteract() => interactPulse = true;
-
-    private Vector2 ReadMove()
-    {
-        Vector2 value = Vector2.zero;
-        if (Keyboard.current != null)
-        {
-            if (Keyboard.current.aKey.isPressed) value.x -= 1f;
-            if (Keyboard.current.dKey.isPressed) value.x += 1f;
-            if (Keyboard.current.sKey.isPressed) value.y -= 1f;
-            if (Keyboard.current.wKey.isPressed) value.y += 1f;
-        }
-
-        Vector2 center = SchoolEscapePrototype.I.MobileHud != null
-            ? SchoolEscapePrototype.I.MobileHud.MovementCenterScreen
-            : new Vector2(112f, 108f);
-        float joystickRadius = SchoolEscapePrototype.I.MobileHud != null
-            ? SchoolEscapePrototype.I.MobileHud.MovementRadiusScreen
-            : 65f;
-        foreach (Touch touch in Touch.activeTouches)
-        {
-            Vector2 p = touch.screenPosition;
-            if ((moveFinger < 0 && p.x < Screen.width * .42f && p.y < Screen.height * .42f) || touch.finger.index == moveFinger)
-            {
-                moveFinger = touch.finger.index;
-                value = Vector2.ClampMagnitude((p - center) / joystickRadius, 1f);
-                if (touch.phase == UnityEngine.InputSystem.TouchPhase.Ended || touch.phase == UnityEngine.InputSystem.TouchPhase.Canceled)
-                    moveFinger = -1;
-                break;
-            }
-        }
-        if (Touch.activeTouches.Count == 0) moveFinger = -1;
-        return value;
-    }
-
-    private void ReadAim()
-    {
-        Camera camera = Camera.main;
-        if (camera == null || Mouse.current == null) return;
-        Ray ray = camera.ScreenPointToRay(Mouse.current.position.ReadValue());
-        Plane plane = new Plane(Vector3.up, transform.position);
-        if (plane.Raycast(ray, out float enter))
-        {
-            Vector3 direction = ray.GetPoint(enter) - transform.position;
-            direction.y = 0f;
-            if (direction.sqrMagnitude > .1f) Facing = direction.normalized;
-        }
-    }
-
-    private void UpdateFlashButtonInput()
-    {
-        Rect button = SchoolEscapePrototype.FlashButtonScreenRect();
-        Mouse mouse = Mouse.current;
-
-        if (!aimingFlash && mouse != null && mouse.leftButton.wasPressedThisFrame)
-        {
-            Vector2 position = mouse.position.ReadValue();
-            if (button.Contains(ToTopLeft(position))) BeginFlashAim(position, true, -1);
-        }
-
-        if (aimingFlash && flashUsesMouse && mouse != null)
-        {
-            UpdateFlashAim(mouse.position.ReadValue());
-            if (mouse.leftButton.wasReleasedThisFrame) EndFlashAim();
-            return;
-        }
-
-        foreach (Touch touch in Touch.activeTouches)
-        {
-            if (!aimingFlash && touch.phase == UnityEngine.InputSystem.TouchPhase.Began && button.Contains(ToTopLeft(touch.screenPosition)))
-            {
-                BeginFlashAim(touch.screenPosition, false, touch.finger.index);
-                break;
-            }
-
-            if (aimingFlash && !flashUsesMouse && touch.finger.index == flashFinger)
-            {
-                UpdateFlashAim(touch.screenPosition);
-                if (touch.phase == UnityEngine.InputSystem.TouchPhase.Ended || touch.phase == UnityEngine.InputSystem.TouchPhase.Canceled)
-                    EndFlashAim();
-                break;
-            }
-        }
-    }
-
-    private static Vector2 ToTopLeft(Vector2 bottomLeftPosition) => new Vector2(bottomLeftPosition.x, Screen.height - bottomLeftPosition.y);
-
-    private void BeginFlashAim(Vector2 screenPosition, bool mouse, int finger)
-    {
-        aimingFlash = true;
-        flashUsesMouse = mouse;
-        flashFinger = finger;
-        flashPressPosition = screenPosition;
-        flashCurrentPosition = screenPosition;
-        manualFlashAim = false;
-    }
-
-    private void UpdateFlashAim(Vector2 screenPosition)
-    {
-        flashCurrentPosition = screenPosition;
-        Vector2 drag = flashCurrentPosition - flashPressPosition;
-        if (drag.magnitude < 24f) return;
-
-        manualFlashAim = true;
-        Vector3 direction = new Vector3(drag.x, 0f, drag.y).normalized;
-        Facing = direction;
-        ShowAimIndicator(direction);
-    }
-
-    private void EndFlashAim()
-    {
-        if (manualFlashAim) FireFlash(Facing);
-        else FireAutoFlash();
-
-        aimingFlash = false;
-        flashUsesMouse = false;
-        manualFlashAim = false;
-        flashFinger = -1;
-        if (aimIndicator != null) Destroy(aimIndicator);
-    }
-
-    private void FireAutoFlash()
-    {
-        Vector3 direction = Facing;
-        float nearestDistance = 7f;
-        foreach (PrototypeEnemy enemy in FindObjectsByType<PrototypeEnemy>(FindObjectsSortMode.None))
-        {
-            Vector3 delta = enemy.transform.position - transform.position;
-            delta.y = 0f;
-            float distance = delta.magnitude;
-            if (distance < nearestDistance)
-            {
-                nearestDistance = distance;
-                direction = delta.normalized;
-            }
-        }
-        FireFlash(direction);
-    }
-
-    private void FireFlash(Vector3 direction)
-    {
-        if (flashCooldown > 0f || !SchoolEscapePrototype.I.UseBattery()) return;
-        flashCooldown = .25f;
-        direction.y = 0f;
-        if (direction.sqrMagnitude < .01f) direction = Facing;
-        Facing = direction.normalized;
-
-        foreach (PrototypeEnemy enemy in FindObjectsByType<PrototypeEnemy>(FindObjectsSortMode.None))
-        {
-            Vector3 delta = enemy.transform.position - transform.position;
-            delta.y = 0f;
-            if (delta.magnitude <= 7f && Vector3.Angle(direction, delta) <= 35f)
-                enemy.HitByFlash();
-        }
-
-        GameObject flash = GameObject.CreatePrimitive(PrimitiveType.Cube);
-        flash.name = "Destello";
-        flash.transform.position = transform.position + direction * 2.4f + Vector3.up * .15f;
-        flash.transform.rotation = Quaternion.LookRotation(direction);
-        flash.transform.localScale = new Vector3(2.7f, .08f, 4.6f);
-        Destroy(flash.GetComponent<Collider>());
-        flash.GetComponent<Renderer>().material = SchoolEscapePrototype.MakeMaterial(new Color(1f, 1f, .7f));
-        Destroy(flash, .12f);
-    }
-
-    private void ShowAimIndicator(Vector3 direction)
-    {
-        if (aimIndicator == null)
-        {
-            aimIndicator = new GameObject("Indicador de cono del flash");
-            CreateIndicatorRay(aimIndicator.transform, 0f);
-            CreateIndicatorRay(aimIndicator.transform, -35f);
-            CreateIndicatorRay(aimIndicator.transform, 35f);
-        }
-        aimIndicator.transform.position = transform.position;
-        aimIndicator.transform.rotation = Quaternion.LookRotation(direction);
-    }
-
-    private void CreateIndicatorRay(Transform parent, float angle)
-    {
-        GameObject ray = GameObject.CreatePrimitive(PrimitiveType.Cube);
-        ray.name = "Borde del cono";
-        Destroy(ray.GetComponent<Collider>());
-        ray.transform.SetParent(parent, false);
-        ray.transform.localRotation = Quaternion.Euler(0f, angle, 0f);
-        float radians = angle * Mathf.Deg2Rad;
-        ray.transform.localPosition = new Vector3(Mathf.Sin(radians) * 2.5f, .12f, Mathf.Cos(radians) * 2.5f);
-        ray.transform.localScale = new Vector3(.08f, .04f, 5f);
-        ray.GetComponent<Renderer>().material = SchoolEscapePrototype.MakeMaterial(new Color(1f, .82f, .16f));
-    }
-
-    private void OnDisable()
-    {
-        if (aimIndicator != null) Destroy(aimIndicator);
-    }
-
-    private void UpdateInteraction(bool pressed)
-    {
-        PrototypeInteractable closest = SchoolEscapePrototype.I.ClosestInteractable(transform.position, 2.2f);
-        if (!pressed || closest == null)
-        {
-            interactionProgress = 0f;
-            currentInteraction = null;
-            return;
-        }
-
-        if (currentInteraction != closest)
-        {
-            currentInteraction = closest;
-            interactionProgress = 0f;
-        }
-        interactionProgress += Time.deltaTime;
-        SchoolEscapePrototype.I.ShowMessage($"{closest.Prompt} {Mathf.Min(100f, interactionProgress / closest.Duration * 100f):0}%", .15f);
-        if (interactionProgress >= closest.Duration)
-        {
-            closest.Complete(this);
-            interactionProgress = 0f;
-            currentInteraction = null;
-        }
-    }
-
-    protected override void OnDowned()
-    {
-        SchoolEscapePrototype.I.ShowMessage("Has caído. Los cultistas intentarán raptarte.", 4f);
-    }
-
-    public override void Captured(Vector3 spawnPosition)
-    {
-        base.Captured(spawnPosition);
-        SchoolEscapePrototype.I.ShowMessage("Te llevaron a un portal de la secta", 999f);
-    }
-}
-
-public class PrototypeAlly : PrototypeActor
-{
-    public PrototypeRescue RescueInteraction { get; private set; }
-    private Vector3 followOffset = new Vector3(1.7f, 0f, -.7f);
-
-    protected override void Awake()
-    {
-        base.Awake();
-        RescueInteraction = gameObject.AddComponent<PrototypeRescue>();
-        RescueInteraction.enabled = false;
-    }
-
-    private void Update()
-    {
-        if (SchoolEscapePrototype.I == null || SchoolEscapePrototype.I.Victory || IsDown || IsCaptive || Dragger != null) return;
-        PrototypePlayer player = SchoolEscapePrototype.I.Player;
-        if (player == null) return;
-        Vector3 target = player.transform.position + followOffset;
-        Vector3 delta = target - transform.position;
-        delta.y = 0f;
-        if (delta.magnitude > 1.2f) Move(delta.normalized * 4.3f);
-    }
-
-    protected override void OnDowned()
-    {
-        RescueInteraction.enabled = true;
-        SchoolEscapePrototype.I.ShowMessage("Tu compañero está caído", 3f);
-    }
-
-    public override void Captured(Vector3 spawnPosition)
-    {
-        base.Captured(spawnPosition);
-        SchoolEscapePrototype.I.ShowMessage("Compañero cautivo: el peligro aumenta", 4f);
-    }
-
-    public override void Rescue()
-    {
-        base.Rescue();
-        RescueInteraction.enabled = false;
-        SchoolEscapePrototype.I.ShowMessage("Compañero rescatado", 3f);
-    }
-
-    public override void RescueFromDrag()
-    {
-        base.RescueFromDrag();
-        RescueInteraction.enabled = false;
-        SchoolEscapePrototype.I.ShowMessage("Compañero liberado: 1 corazón e invulnerabilidad temporal", 3f);
-    }
-}
-
-public class PrototypeEnemy : MonoBehaviour
-{
-    public bool IsSmall;
-    private CharacterController controller;
-    private float stunnedUntil;
-    private float nextHit;
-    private PrototypeActor dragTarget;
-
-    private void Awake() => controller = GetComponent<CharacterController>();
-
-    private void Update()
-    {
-        if (SchoolEscapePrototype.I == null || SchoolEscapePrototype.I.Victory || Time.time < stunnedUntil) return;
-        PrototypePlayer player = SchoolEscapePrototype.I.Player;
-        PrototypeAlly ally = SchoolEscapePrototype.I.Ally;
-        if (player == null || ally == null) return;
-
-        if (dragTarget != null)
-        {
-            Vector3 destination = SchoolEscapePrototype.I.ClosestEnemySpawn(transform.position);
-            Vector3 delta = destination - transform.position;
-            delta.y = 0f;
-            float draggingSpeed = (IsSmall ? 3.35f : 2.55f) * .5f;
-            if (delta.sqrMagnitude > .1f) transform.rotation = Quaternion.LookRotation(delta);
-            controller.Move(delta.normalized * draggingSpeed * Time.deltaTime);
-            dragTarget.DragTo(transform.position, delta.normalized);
-            if (delta.magnitude < 1f)
-            {
-                PrototypeActor captured = dragTarget;
-                dragTarget = null;
-                captured.Captured(destination);
-            }
-            return;
-        }
-
-        PrototypeActor target = ChooseTarget(player, ally);
-        if (target == null) return;
-        Vector3 direction = target.transform.position - transform.position;
-        direction.y = 0f;
-        float speed = IsSmall ? 3.35f : 2.55f;
-        controller.Move(direction.normalized * speed * Time.deltaTime);
-        if (direction.sqrMagnitude > .1f) transform.rotation = Quaternion.LookRotation(direction);
-
-        if (direction.magnitude < 1.05f && Time.time > nextHit)
-        {
-            nextHit = Time.time + 1.25f;
-            if (target.IsDown && target.StartDrag(this))
-                dragTarget = target;
-            else
-                target.Damage(1);
-        }
-    }
-
-    private PrototypeActor ChooseTarget(PrototypePlayer player, PrototypeAlly ally)
-    {
-        PrototypeActor downedPlayer = player.CanBeDragged ? player : null;
-        PrototypeActor downedAlly = ally.CanBeDragged ? ally : null;
-        if (downedPlayer != null && downedAlly != null)
-            return Vector3.Distance(transform.position, player.transform.position) <= Vector3.Distance(transform.position, ally.transform.position) ? player : ally;
-        if (downedPlayer != null) return downedPlayer;
-        if (downedAlly != null) return downedAlly;
-
-        bool playerAvailable = !player.IsDown && !player.IsCaptive;
-        bool allyAvailable = !ally.IsDown && !ally.IsCaptive;
-        if (!playerAvailable) return allyAvailable ? ally : null;
-        if (!allyAvailable) return player;
-        return Vector3.Distance(transform.position, player.transform.position) <= Vector3.Distance(transform.position, ally.transform.position) ? player : ally;
-    }
-
-    public void HitByFlash()
-    {
-        if (dragTarget != null)
-        {
-            dragTarget.RescueFromDrag();
-            dragTarget = null;
-        }
-        if (IsSmall)
-        {
-            SchoolEscapePrototype.I.UnregisterEnemy(this);
-            Destroy(gameObject);
-        }
-        else
-        {
-            stunnedUntil = Time.time + 1.2f;
-            SchoolEscapePrototype.I.ShowMessage("Cultista aturdido 1.2 s", 1.2f);
-        }
-    }
-
-    public void StopDragging(PrototypeActor actor)
-    {
-        if (dragTarget == actor) dragTarget = null;
-    }
-}
-
-public abstract class PrototypeInteractable : MonoBehaviour
-{
-    public virtual bool Available => enabled && gameObject.activeInHierarchy;
-    public abstract float Duration { get; }
-    public abstract string Prompt { get; }
-    public abstract void Complete(PrototypePlayer player);
-}
-
-public class PrototypeLocker : PrototypeInteractable
-{
-    private bool searched;
-    public override bool Available => base.Available && !searched;
-    public override float Duration => 1.5f;
-    public override string Prompt => "Registrando taquilla";
-
-    public override void Complete(PrototypePlayer player)
-    {
-        if (searched) return;
-        searched = true;
-        GetComponent<Renderer>().material.color = new Color(.09f, .12f, .13f);
-        if (Random.value < .67f) SchoolEscapePrototype.I.AddBattery();
-        else SchoolEscapePrototype.I.AddBandage();
-    }
-}
-
-public class PrototypeKey : PrototypeInteractable
-{
-    public override float Duration => 1.5f;
-    public override string Prompt => "Recogiendo llave";
-    public override void Complete(PrototypePlayer player)
-    {
-        SchoolEscapePrototype.I.CollectKey();
-        gameObject.SetActive(false);
-    }
-}
-
-public class PrototypeExitPanel : PrototypeInteractable
-{
-    private bool activated;
-    public override bool Available => base.Available && !activated;
-    public override float Duration => 1.5f;
-    public override string Prompt => "Activando panel eléctrico";
-
-    public override void Complete(PrototypePlayer player)
-    {
-        if (activated) return;
-        activated = true;
-        SchoolEscapePrototype.I.UnlockExit();
-    }
-}
-
-public abstract class PrototypeGuaranteedResourceFurniture : PrototypeInteractable
-{
-    private bool searched;
-    public override bool Available => base.Available && !searched;
-    public override float Duration => 2f;
-
-    public override void Complete(PrototypePlayer player)
-    {
-        if (searched) return;
-        searched = true;
-        SpawnGuaranteedResource(player);
-
-        Renderer targetRenderer = GetComponent<Renderer>();
-        if (targetRenderer != null)
-            targetRenderer.material.color *= .55f;
-    }
-
-    protected abstract void SpawnGuaranteedResource(PrototypePlayer player);
-}
-
-public class PrototypeBatteryFurniture : PrototypeGuaranteedResourceFurniture
-{
-    public override string Prompt => "Abriendo mueble de pilas";
-    protected override void SpawnGuaranteedResource(PrototypePlayer player)
-    {
-        Vector3 position = GetDropPosition(player);
-        GameObject pickup = SchoolEscapePrototype.CreateBox(
-            "Pila garantizada",
-            position,
-            new Vector3(.35f, .2f, .2f),
-            SchoolEscapePrototype.MakeMaterial(new Color(1f, .82f, .12f)),
-            false);
-        SchoolEscapePrototype.I.Register(pickup.AddComponent<PrototypeBatteryWorldPickup>());
-    }
-
-    private Vector3 GetDropPosition(PrototypePlayer player)
-    {
-        Vector3 direction = player != null ? player.transform.position - transform.position : transform.forward;
-        direction.y = 0f;
-        if (direction.sqrMagnitude < .01f) direction = transform.forward;
-        return transform.position + direction.normalized * .8f + Vector3.up * .3f;
-    }
-}
-
-public class PrototypeBandageFurniture : PrototypeGuaranteedResourceFurniture
-{
-    public override string Prompt => "Abriendo botiquín";
-    protected override void SpawnGuaranteedResource(PrototypePlayer player)
-    {
-        Vector3 direction = player != null ? player.transform.position - transform.position : transform.forward;
-        direction.y = 0f;
-        if (direction.sqrMagnitude < .01f) direction = transform.forward;
-        Vector3 position = transform.position + direction.normalized * .8f + Vector3.up * .3f;
-        GameObject pickup = SchoolEscapePrototype.CreateBox(
-            "Venda garantizada",
-            position,
-            new Vector3(.4f, .12f, .28f),
-            SchoolEscapePrototype.MakeMaterial(new Color(.86f, .95f, .92f)),
-            false);
-        SchoolEscapePrototype.I.Register(pickup.AddComponent<PrototypeBandageWorldPickup>());
-    }
-}
-
-public class PrototypeBatteryWorldPickup : PrototypeInteractable
-{
-    public override float Duration => .1f;
-    public override string Prompt => "Recogiendo pila";
-
-    public override void Complete(PrototypePlayer player)
-    {
-        SchoolEscapePrototype.I.AddBattery();
-        gameObject.SetActive(false);
-    }
-}
-
-public class PrototypeBandageWorldPickup : PrototypeInteractable
-{
-    public override float Duration => .1f;
-    public override string Prompt => "Recogiendo venda";
-
-    public override void Complete(PrototypePlayer player)
-    {
-        SchoolEscapePrototype.I.AddBandage();
-        gameObject.SetActive(false);
-    }
-}
-
-public class PrototypeDoor : PrototypeInteractable
-{
-    public override float Duration => .25f;
-    public override string Prompt => SchoolEscapePrototype.I.HasKey ? "Abriendo salida" : "Puerta bloqueada";
-    public override void Complete(PrototypePlayer player)
-    {
-        if (!SchoolEscapePrototype.I.HasKey)
-        {
-            SchoolEscapePrototype.I.ShowMessage("Necesitas encontrar la llave", 2f);
-            return;
-        }
-        GetComponent<Renderer>().material.color = new Color(.08f, .62f, .22f);
-        SchoolEscapePrototype.I.Win();
-    }
-}
-
-public class PrototypeRescue : PrototypeInteractable
-{
-    public override bool Available
-    {
-        get
-        {
-            PrototypeAlly ally = GetComponent<PrototypeAlly>();
-            return ally != null && (ally.IsDown || ally.IsCaptive);
-        }
-    }
-    public override float Duration => 2.5f;
-    public override string Prompt => "Rescatando compañero";
-    public override void Complete(PrototypePlayer player) => GetComponent<PrototypeAlly>().Rescue();
-}
-
-public class PrototypeRitual : MonoBehaviour
-{
-    private void Update() => transform.Rotate(0f, 25f * Time.deltaTime, 0f);
-}
-
-public class PrototypeCamera : MonoBehaviour
-{
-    private Vector3 velocity;
-    private void LateUpdate()
-    {
-        if (SchoolEscapePrototype.I == null || SchoolEscapePrototype.I.Player == null) return;
-        Vector3 target = SchoolEscapePrototype.I.Player.transform.position + new Vector3(0f, 17f, -10f);
-        transform.position = Vector3.SmoothDamp(transform.position, target, ref velocity, .18f);
-        transform.rotation = Quaternion.Euler(59f, 0f, 0f);
     }
 }

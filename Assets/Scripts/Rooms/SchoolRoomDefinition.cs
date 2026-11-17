@@ -25,6 +25,7 @@ namespace SchoolEscape.Rooms
         [SerializeField] private Transform playerSpawnRoot;
         [SerializeField] private Transform enemySpawnRoot;
         [SerializeField] private Transform exitPanel;
+        [SerializeField] private List<Transform> exitPanels = new List<Transform>();
         [SerializeField] private List<Transform> exits = new List<Transform>();
 
         [Header("Content groups")]
@@ -36,6 +37,7 @@ namespace SchoolEscape.Rooms
         public string RoomId => roomId;
         public RoomArchetype Archetype => archetype;
         public Transform ExitPanel => exitPanel;
+        public IReadOnlyList<Transform> ExitPanels => exitPanels;
         public IReadOnlyList<Transform> Exits => exits;
         public Transform RandomInteractablesRoot => randomInteractablesRoot;
         public Transform GuaranteedBatteryRoot => guaranteedBatteryRoot;
@@ -43,6 +45,12 @@ namespace SchoolEscape.Rooms
         public Transform ObstaclesRoot => obstaclesRoot;
         public int PlayerSpawnCount => playerSpawnRoot == null ? 0 : playerSpawnRoot.childCount;
         public int EnemySpawnCount => enemySpawnRoot == null ? 0 : enemySpawnRoot.childCount;
+
+        public void ConfigureIdentity(string id, RoomArchetype roomArchetype)
+        {
+            roomId = id;
+            archetype = roomArchetype;
+        }
 
         public Transform GetPlayerSpawn(int playerIndex)
         {
@@ -61,7 +69,13 @@ namespace SchoolEscape.Rooms
         {
             playerSpawnRoot = FindByName("PlayersSpawn", "PlayerSpawns");
             enemySpawnRoot = FindByName("EnemySpawns");
-            exitPanel = FindByName("Palanca", "Panel", "PanelSalida");
+            exitPanels.Clear();
+            foreach (Transform child in GetComponentsInChildren<Transform>(true))
+            {
+                if (IsNumberedName(child.name, "Palanca") || IsNumberedName(child.name, "PanelSalida"))
+                    exitPanels.Add(child);
+            }
+            exitPanel = exitPanels.Count > 0 ? exitPanels[0] : FindByName("Panel");
             randomInteractablesRoot = FindByName("NormalInteratables", "NormalInteractables");
             guaranteedBatteryRoot = FindByName("Pilas", "Baterias", "Batteries");
             guaranteedBandageRoot = FindByName("Botiquines", "Vendas", "Bandages");
@@ -82,8 +96,8 @@ namespace SchoolEscape.Rooms
             if (PlayerSpawnCount < 2) errors.Add("The MVP needs at least 2 player spawn points.");
             if (PlayerSpawnCount > 4) errors.Add("The MVP supports at most 4 player spawn points.");
             if (EnemySpawnCount == 0) errors.Add("At least one enemy spawn point is required.");
-            if (exitPanel == null) errors.Add("The exit panel/lever is missing.");
-            if (exits.Count == 0) errors.Add("At least one object named Salida is required.");
+            if (exitPanels.Count == 0 && exitPanel == null) errors.Add("The exit panel/lever is missing.");
+            if (exits.Count == 0 || exits.TrueForAll(item => item == null)) errors.Add("At least one object named Salida is required.");
             if (randomInteractablesRoot == null) errors.Add("The random interactables group is missing.");
             if (guaranteedBatteryRoot == null) errors.Add("The guaranteed battery group is missing.");
             if (guaranteedBandageRoot == null) errors.Add("The guaranteed bandage group is missing.");
@@ -102,6 +116,11 @@ namespace SchoolEscape.Rooms
                 }
             }
             return null;
+        }
+
+        private static bool IsNumberedName(string candidate, string baseName)
+        {
+            return candidate == baseName || candidate.StartsWith(baseName + " (", System.StringComparison.Ordinal);
         }
     }
 }
