@@ -236,6 +236,7 @@ GameObject:
   - component: {fileID: 6667785910858174872}
   - component: {fileID: 2484826663438778097}
   - component: {fileID: 8314127884936460839}
+  - component: {fileID: 5383471507661640801}
   m_Layer: 0
   m_Name: Mapa_Salon3
   m_TagString: Untagged
@@ -323,6 +324,38 @@ MonoBehaviour:
   objective: {fileID: 2484826663438778097}
   exits:
   - {fileID: 1468575668310105866}
+--- !u!114 &5383471507661640801
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 520801269022307336}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 7a5ac11cc976e418e8d13136b07e1f52, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Unity.AI.Navigation::Unity.AI.Navigation.NavMeshSurface
+  m_SerializedVersion: 0
+  m_AgentTypeID: 0
+  m_CollectObjects: 2
+  m_Size: {x: 10, y: 10, z: 10}
+  m_Center: {x: 0, y: 2, z: 0}
+  m_LayerMask:
+    serializedVersion: 2
+    m_Bits: 4294967295
+  m_UseGeometry: 1
+  m_DefaultArea: 0
+  m_GenerateLinks: 0
+  m_IgnoreNavMeshAgent: 1
+  m_IgnoreNavMeshObstacle: 1
+  m_OverrideTileSize: 1
+  m_TileSize: 128
+  m_OverrideVoxelSize: 1
+  m_VoxelSize: 0.12
+  m_MinRegionArea: 0.35
+  m_NavMeshData: {fileID: 23800000, guid: a8fa78e7e46732643b3c76d5f9607aae, type: 2}
+  m_BuildHeightMesh: 0
 --- !u!1 &1004325266849750788
 GameObject:
   m_ObjectHideFlags: 0
@@ -1180,15 +1213,15 @@ Transform:
   m_ConstrainProportionsScale: 0
   m_Children:
   - {fileID: 9190232529035713298}
-  - {fileID: 7710012058048569238}
   - {fileID: 3748753603361435600}
   - {fileID: 6140800205350368289}
   - {fileID: 6974938958855784302}
-  - {fileID: 6130928848170138907}
   - {fileID: 4987965697215896705}
   - {fileID: 4489340439307256437}
   - {fileID: 7447068049369669283}
   - {fileID: 3515047016718012090}
+  - {fileID: 7710012058048569238}
+  - {fileID: 6130928848170138907}
   - {fileID: 6741714717036150551}
   - {fileID: 5071381967585076554}
   - {fileID: 1909151596906484552}
@@ -1449,6 +1482,7 @@ GameObject:
   - component: {fileID: 666824451751480078}
   - component: {fileID: 6059284755739977281}
   - component: {fileID: 4852712352601560626}
+  - component: {fileID: 8181347822978200860}
   m_Layer: 0
   m_Name: Palanca
   m_TagString: Untagged
@@ -1543,12 +1577,32 @@ BoxCollider:
     serializedVersion: 2
     m_Bits: 0
   m_LayerOverridePriority: 0
-  m_IsTrigger: 0
+  m_IsTrigger: 1
   m_ProvidesContacts: 0
   m_Enabled: 1
   serializedVersion: 3
   m_Size: {x: 1, y: 1, z: 1}
   m_Center: {x: 0, y: 0, z: 0}
+--- !u!114 &8181347822978200860
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 2921075085367428300}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 1e3fdca004f2d45fe8abbed571a8abd5, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Unity.AI.Navigation::Unity.AI.Navigation.NavMeshModifier
+  m_SerializedVersion: 0
+  m_OverrideArea: 0
+  m_Area: 0
+  m_OverrideGenerateLinks: 0
+  m_GenerateLinks: 0
+  m_IgnoreFromBuild: 1
+  m_ApplyToChildren: 1
+  m_AffectedAgents: ffffffff
 --- !u!1 &3074800859070585392
 GameObject:
   m_ObjectHideFlags: 0
@@ -1621,7 +1675,9 @@ MonoBehaviour:
   materialSlot: 1
   closedMaterial: {fileID: 0}
   openMaterial: {fileID: 0}
-  blockingCollider: {fileID: 0}
+  blockingCollider: {fileID: 7327129354598105484}
+  disappearWhenUnlocked: 0
+  connectionPieces: []
   onUnlocked:
     m_PersistentCalls:
       m_Calls: []
@@ -1983,6 +2039,8 @@ MonoBehaviour:
   closedMaterial: {fileID: 2100000, guid: 8790d1b44e64d324a8b337238b3e00f3, type: 2}
   openMaterial: {fileID: 2100000, guid: 56fce12478fe5eb47a7b2b7daf899f04, type: 2}
   blockingCollider: {fileID: 8601101250696524983}
+  disappearWhenUnlocked: 0
+  connectionPieces: []
   onUnlocked:
     m_PersistentCalls:
       m_Calls: []
@@ -4229,6 +4287,7 @@ GameObject:
   serializedVersion: 6
   m_Component:
   - component: {fileID: 3797191010477134713}
+  - component: {fileID: 8151878379528761515}
   m_Layer: 0
   m_Name: Obstaculos
   m_TagString: Untagged
@@ -4262,6 +4321,26 @@ Transform:
   - {fileID: 4891233328444908491}
   m_Father: {fileID: 2421690182993985175}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &8151878379528761515
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 7402092609722275514}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 1e3fdca004f2d45fe8abbed571a8abd5, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Unity.AI.Navigation::Unity.AI.Navigation.NavMeshModifier
+  m_SerializedVersion: 0
+  m_OverrideArea: 1
+  m_Area: 1
+  m_OverrideGenerateLinks: 0
+  m_GenerateLinks: 0
+  m_IgnoreFromBuild: 0
+  m_ApplyToChildren: 1
+  m_AffectedAgents: ffffffff
 --- !u!1 &7537065367304422425
 GameObject:
   m_ObjectHideFlags: 0
@@ -4495,6 +4574,7 @@ GameObject:
   serializedVersion: 6
   m_Component:
   - component: {fileID: 2312592609913657715}
+  - component: {fileID: 3002735673178317587}
   m_Layer: 0
   m_Name: Botiquines
   m_TagString: Untagged
@@ -4519,6 +4599,26 @@ Transform:
   - {fileID: 5651452796617415405}
   m_Father: {fileID: 2421690182993985175}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &3002735673178317587
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 7971482008623102409}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 1e3fdca004f2d45fe8abbed571a8abd5, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Unity.AI.Navigation::Unity.AI.Navigation.NavMeshModifier
+  m_SerializedVersion: 0
+  m_OverrideArea: 1
+  m_Area: 1
+  m_OverrideGenerateLinks: 0
+  m_GenerateLinks: 0
+  m_IgnoreFromBuild: 0
+  m_ApplyToChildren: 1
+  m_AffectedAgents: ffffffff
 --- !u!1 &8033943261455195261
 GameObject:
   m_ObjectHideFlags: 0
@@ -6572,7 +6672,7 @@ PrefabInstance:
     m_Modifications:
     - target: {fileID: 567620118201303037, guid: 971b7c4674a6cda4fb250ec4f4cec721, type: 3}
       propertyPath: m_Name
-      value: ParedPrueba (26)
+      value: ParedAdyacenteDerecha
       objectReference: {fileID: 0}
     - target: {fileID: 6022237477481998101, guid: 971b7c4674a6cda4fb250ec4f4cec721, type: 3}
       propertyPath: m_LocalScale.x
@@ -6631,6 +6731,11 @@ PrefabInstance:
     m_AddedGameObjects: []
     m_AddedComponents: []
   m_SourcePrefab: {fileID: 100100000, guid: 971b7c4674a6cda4fb250ec4f4cec721, type: 3}
+--- !u!1 &100962812204623347 stripped
+GameObject:
+  m_CorrespondingSourceObject: {fileID: 567620118201303037, guid: 971b7c4674a6cda4fb250ec4f4cec721, type: 3}
+  m_PrefabInstance: {fileID: 470105378898303502}
+  m_PrefabAsset: {fileID: 0}
 --- !u!4 &6130928848170138907 stripped
 Transform:
   m_CorrespondingSourceObject: {fileID: 6022237477481998101, guid: 971b7c4674a6cda4fb250ec4f4cec721, type: 3}
@@ -7960,7 +8065,7 @@ PrefabInstance:
     m_Modifications:
     - target: {fileID: 567620118201303037, guid: 971b7c4674a6cda4fb250ec4f4cec721, type: 3}
       propertyPath: m_Name
-      value: ParedPrueba (28)
+      value: EntradaRescateAbajo
       objectReference: {fileID: 0}
     - target: {fileID: 6022237477481998101, guid: 971b7c4674a6cda4fb250ec4f4cec721, type: 3}
       propertyPath: m_LocalScale.x
@@ -8017,8 +8122,64 @@ PrefabInstance:
     m_RemovedComponents: []
     m_RemovedGameObjects: []
     m_AddedGameObjects: []
-    m_AddedComponents: []
+    m_AddedComponents:
+    - targetCorrespondingSourceObject: {fileID: 567620118201303037, guid: 971b7c4674a6cda4fb250ec4f4cec721, type: 3}
+      insertIndex: -1
+      addedObject: {fileID: 7764320732217477264}
+    - targetCorrespondingSourceObject: {fileID: 567620118201303037, guid: 971b7c4674a6cda4fb250ec4f4cec721, type: 3}
+      insertIndex: -1
+      addedObject: {fileID: 6755242919318790959}
   m_SourcePrefab: {fileID: 100100000, guid: 971b7c4674a6cda4fb250ec4f4cec721, type: 3}
+--- !u!1 &719660843967277055 stripped
+GameObject:
+  m_CorrespondingSourceObject: {fileID: 567620118201303037, guid: 971b7c4674a6cda4fb250ec4f4cec721, type: 3}
+  m_PrefabInstance: {fileID: 1016732442380048386}
+  m_PrefabAsset: {fileID: 0}
+--- !u!114 &7764320732217477264
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 719660843967277055}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 397b83d5309de4b46ada1d57ca38bef6, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::SchoolEscape.Rooms.RoomExitGate
+  unlocked: 0
+  opening: 0
+  doorRenderer: {fileID: 0}
+  materialSlot: 0
+  closedMaterial: {fileID: 2100000, guid: 8790d1b44e64d324a8b337238b3e00f3, type: 2}
+  openMaterial: {fileID: 2100000, guid: 56fce12478fe5eb47a7b2b7daf899f04, type: 2}
+  blockingCollider: {fileID: 1414103998221149060}
+  disappearWhenUnlocked: 1
+  connectionPieces:
+  - {fileID: 4507163657459566462}
+  - {fileID: 100962812204623347}
+  onUnlocked:
+    m_PersistentCalls:
+      m_Calls: []
+--- !u!114 &6755242919318790959
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 719660843967277055}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: ac3af386096827b48bdfecd3c784ed51, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::SchoolEscape.Rooms.RescueEntranceAnchor
+  direction: 1
+  gate: {fileID: 7764320732217477264}
+--- !u!65 &1414103998221149060 stripped
+BoxCollider:
+  m_CorrespondingSourceObject: {fileID: 2126755503978838918, guid: 971b7c4674a6cda4fb250ec4f4cec721, type: 3}
+  m_PrefabInstance: {fileID: 1016732442380048386}
+  m_PrefabAsset: {fileID: 0}
 --- !u!4 &6741714717036150551 stripped
 Transform:
   m_CorrespondingSourceObject: {fileID: 6022237477481998101, guid: 971b7c4674a6cda4fb250ec4f4cec721, type: 3}
@@ -15656,7 +15817,7 @@ PrefabInstance:
     m_Modifications:
     - target: {fileID: 567620118201303037, guid: 971b7c4674a6cda4fb250ec4f4cec721, type: 3}
       propertyPath: m_Name
-      value: ParedPrueba (24)
+      value: ParedAdyacenteIzquierda
       objectReference: {fileID: 0}
     - target: {fileID: 6022237477481998101, guid: 971b7c4674a6cda4fb250ec4f4cec721, type: 3}
       propertyPath: m_LocalScale.x
@@ -15715,6 +15876,11 @@ PrefabInstance:
     m_AddedGameObjects: []
     m_AddedComponents: []
   m_SourcePrefab: {fileID: 100100000, guid: 971b7c4674a6cda4fb250ec4f4cec721, type: 3}
+--- !u!1 &4507163657459566462 stripped
+GameObject:
+  m_CorrespondingSourceObject: {fileID: 567620118201303037, guid: 971b7c4674a6cda4fb250ec4f4cec721, type: 3}
+  m_PrefabInstance: {fileID: 4137750370647373955}
+  m_PrefabAsset: {fileID: 0}
 --- !u!4 &7710012058048569238 stripped
 Transform:
   m_CorrespondingSourceObject: {fileID: 6022237477481998101, guid: 971b7c4674a6cda4fb250ec4f4cec721, type: 3}

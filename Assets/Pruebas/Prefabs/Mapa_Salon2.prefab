@@ -2863,15 +2863,15 @@ Transform:
   - {fileID: 3130770933276891540}
   - {fileID: 846534743070601240}
   - {fileID: 965714308647868571}
-  - {fileID: 2692411662158765276}
   - {fileID: 931561462482692495}
   - {fileID: 3657413894554291200}
   - {fileID: 221797770152466594}
-  - {fileID: 746199089701415312}
   - {fileID: 2529697830858461676}
   - {fileID: 1703326569820826623}
   - {fileID: 637505498347865172}
+  - {fileID: 2692411662158765276}
   - {fileID: 7191918410239496207}
+  - {fileID: 746199089701415312}
   - {fileID: 3667882168338550090}
   - {fileID: 5595297490789438945}
   - {fileID: 6657580130238596270}
@@ -4783,7 +4783,9 @@ MonoBehaviour:
   materialSlot: 1
   closedMaterial: {fileID: 0}
   openMaterial: {fileID: 0}
-  blockingCollider: {fileID: 0}
+  blockingCollider: {fileID: 4332420362060673906}
+  disappearWhenUnlocked: 0
+  connectionPieces: []
   onUnlocked:
     m_PersistentCalls:
       m_Calls: []
@@ -5627,11 +5629,13 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::SchoolEscape.Rooms.RoomExitGate
   unlocked: 0
   opening: 0
-  doorRenderer: {fileID: 0}
+  doorRenderer: {fileID: 2186344852295437856}
   materialSlot: 1
   closedMaterial: {fileID: 0}
   openMaterial: {fileID: 0}
-  blockingCollider: {fileID: 0}
+  blockingCollider: {fileID: 3171521376601564102}
+  disappearWhenUnlocked: 0
+  connectionPieces: []
   onUnlocked:
     m_PersistentCalls:
       m_Calls: []
@@ -6686,6 +6690,7 @@ GameObject:
   - component: {fileID: 9200306771206221318}
   - component: {fileID: 7327355576324505234}
   - component: {fileID: 1305893803124213029}
+  - component: {fileID: 1184473269580268512}
   m_Layer: 0
   m_Name: Mapa_Salon2
   m_TagString: Untagged
@@ -6773,6 +6778,38 @@ MonoBehaviour:
   objective: {fileID: 7327355576324505234}
   exits:
   - {fileID: 1237602243031669285}
+--- !u!114 &1184473269580268512
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 7180089003151436362}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 7a5ac11cc976e418e8d13136b07e1f52, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Unity.AI.Navigation::Unity.AI.Navigation.NavMeshSurface
+  m_SerializedVersion: 0
+  m_AgentTypeID: 0
+  m_CollectObjects: 2
+  m_Size: {x: 10, y: 10, z: 10}
+  m_Center: {x: 0, y: 2, z: 0}
+  m_LayerMask:
+    serializedVersion: 2
+    m_Bits: 4294967295
+  m_UseGeometry: 1
+  m_DefaultArea: 0
+  m_GenerateLinks: 0
+  m_IgnoreNavMeshAgent: 1
+  m_IgnoreNavMeshObstacle: 1
+  m_OverrideTileSize: 1
+  m_TileSize: 128
+  m_OverrideVoxelSize: 1
+  m_VoxelSize: 0.12
+  m_MinRegionArea: 0.35
+  m_NavMeshData: {fileID: 23800000, guid: e89fbd05d60c0794ea2c23e009a63506, type: 2}
+  m_BuildHeightMesh: 0
 --- !u!1 &7253172020068822936
 GameObject:
   m_ObjectHideFlags: 0
@@ -7130,6 +7167,8 @@ MonoBehaviour:
   closedMaterial: {fileID: 2100000, guid: 8790d1b44e64d324a8b337238b3e00f3, type: 2}
   openMaterial: {fileID: 2100000, guid: 56fce12478fe5eb47a7b2b7daf899f04, type: 2}
   blockingCollider: {fileID: 6830484504611284042}
+  disappearWhenUnlocked: 0
+  connectionPieces: []
   onUnlocked:
     m_PersistentCalls:
       m_Calls: []
@@ -7478,6 +7517,7 @@ GameObject:
   serializedVersion: 6
   m_Component:
   - component: {fileID: 683324092068462316}
+  - component: {fileID: 522640708485404426}
   m_Layer: 0
   m_Name: Botiquines
   m_TagString: Untagged
@@ -7502,6 +7542,26 @@ Transform:
   - {fileID: 597030451677001442}
   m_Father: {fileID: 6767859425624999522}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &522640708485404426
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 8461586847879470081}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 1e3fdca004f2d45fe8abbed571a8abd5, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Unity.AI.Navigation::Unity.AI.Navigation.NavMeshModifier
+  m_SerializedVersion: 0
+  m_OverrideArea: 1
+  m_Area: 1
+  m_OverrideGenerateLinks: 0
+  m_GenerateLinks: 0
+  m_IgnoreFromBuild: 0
+  m_ApplyToChildren: 1
+  m_AffectedAgents: ffffffff
 --- !u!1 &8659654565860898434
 GameObject:
   m_ObjectHideFlags: 0
@@ -7881,6 +7941,7 @@ GameObject:
   - component: {fileID: 8928321429060340106}
   - component: {fileID: 6761182251108056493}
   - component: {fileID: 2842602003068683275}
+  - component: {fileID: 3986695061549505068}
   m_Layer: 0
   m_Name: Palanca
   m_TagString: Untagged
@@ -7975,12 +8036,32 @@ BoxCollider:
     serializedVersion: 2
     m_Bits: 0
   m_LayerOverridePriority: 0
-  m_IsTrigger: 0
+  m_IsTrigger: 1
   m_ProvidesContacts: 0
   m_Enabled: 1
   serializedVersion: 3
   m_Size: {x: 1, y: 1, z: 1}
   m_Center: {x: 0, y: 0, z: 0}
+--- !u!114 &3986695061549505068
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 9039484217624035925}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 1e3fdca004f2d45fe8abbed571a8abd5, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Unity.AI.Navigation::Unity.AI.Navigation.NavMeshModifier
+  m_SerializedVersion: 0
+  m_OverrideArea: 0
+  m_Area: 0
+  m_OverrideGenerateLinks: 0
+  m_GenerateLinks: 0
+  m_IgnoreFromBuild: 1
+  m_ApplyToChildren: 1
+  m_AffectedAgents: ffffffff
 --- !u!1 &9086614357327282175
 GameObject:
   m_ObjectHideFlags: 0
@@ -8133,6 +8214,7 @@ GameObject:
   serializedVersion: 6
   m_Component:
   - component: {fileID: 7540159354032606904}
+  - component: {fileID: 3123171828940993202}
   m_Layer: 0
   m_Name: Obstaculos
   m_TagString: Untagged
@@ -8180,6 +8262,26 @@ Transform:
   - {fileID: 7363155533606899483}
   m_Father: {fileID: 6767859425624999522}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &3123171828940993202
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 9173683185890736081}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 1e3fdca004f2d45fe8abbed571a8abd5, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Unity.AI.Navigation::Unity.AI.Navigation.NavMeshModifier
+  m_SerializedVersion: 0
+  m_OverrideArea: 1
+  m_Area: 1
+  m_OverrideGenerateLinks: 0
+  m_GenerateLinks: 0
+  m_IgnoreFromBuild: 0
+  m_ApplyToChildren: 1
+  m_AffectedAgents: ffffffff
 --- !u!1001 &76448909927146779
 PrefabInstance:
   m_ObjectHideFlags: 0
@@ -8900,7 +9002,7 @@ PrefabInstance:
       objectReference: {fileID: 2100000, guid: de06a9ddfaa363746b86c36c810a8c7c, type: 2}
     - target: {fileID: 6435677268899838634, guid: 851d5372e25dbc649b3a0734563faed8, type: 3}
       propertyPath: m_Name
-      value: ParedPrueba (18)
+      value: ParedAdyacenteDerecha
       objectReference: {fileID: 0}
     m_RemovedComponents: []
     m_RemovedGameObjects: []
@@ -8910,6 +9012,11 @@ PrefabInstance:
 --- !u!4 &746199089701415312 stripped
 Transform:
   m_CorrespondingSourceObject: {fileID: 699149603036525128, guid: 851d5372e25dbc649b3a0734563faed8, type: 3}
+  m_PrefabInstance: {fileID: 281730897915911128}
+  m_PrefabAsset: {fileID: 0}
+--- !u!1 &6537246037211554162 stripped
+GameObject:
+  m_CorrespondingSourceObject: {fileID: 6435677268899838634, guid: 851d5372e25dbc649b3a0734563faed8, type: 3}
   m_PrefabInstance: {fileID: 281730897915911128}
   m_PrefabAsset: {fileID: 0}
 --- !u!1001 &293430494420772441
@@ -15820,7 +15927,7 @@ PrefabInstance:
       objectReference: {fileID: 2100000, guid: 6ea695a93133eb54099cc303f0ef4e7f, type: 2}
     - target: {fileID: 6435677268899838634, guid: 851d5372e25dbc649b3a0734563faed8, type: 3}
       propertyPath: m_Name
-      value: ParedPrueba (16)
+      value: ParedAdyacenteIzquierda
       objectReference: {fileID: 0}
     m_RemovedComponents: []
     m_RemovedGameObjects: []
@@ -15830,6 +15937,11 @@ PrefabInstance:
 --- !u!4 &2692411662158765276 stripped
 Transform:
   m_CorrespondingSourceObject: {fileID: 699149603036525128, guid: 851d5372e25dbc649b3a0734563faed8, type: 3}
+  m_PrefabInstance: {fileID: 3237735156061007508}
+  m_PrefabAsset: {fileID: 0}
+--- !u!1 &8484395324857373758 stripped
+GameObject:
+  m_CorrespondingSourceObject: {fileID: 6435677268899838634, guid: 851d5372e25dbc649b3a0734563faed8, type: 3}
   m_PrefabInstance: {fileID: 3237735156061007508}
   m_PrefabAsset: {fileID: 0}
 --- !u!1001 &3339330635980708013
@@ -26026,15 +26138,80 @@ PrefabInstance:
       propertyPath: m_LocalEulerAnglesHint.z
       value: 0
       objectReference: {fileID: 0}
+    - target: {fileID: 2483766111563215019, guid: 851d5372e25dbc649b3a0734563faed8, type: 3}
+      propertyPath: 'm_Materials.Array.data[1]'
+      value: 
+      objectReference: {fileID: 2100000, guid: 8790d1b44e64d324a8b337238b3e00f3, type: 2}
     - target: {fileID: 6435677268899838634, guid: 851d5372e25dbc649b3a0734563faed8, type: 3}
       propertyPath: m_Name
-      value: ParedPrueba (20)
+      value: EntradaRescateDerecha
       objectReference: {fileID: 0}
     m_RemovedComponents: []
     m_RemovedGameObjects: []
     m_AddedGameObjects: []
-    m_AddedComponents: []
+    m_AddedComponents:
+    - targetCorrespondingSourceObject: {fileID: 6435677268899838634, guid: 851d5372e25dbc649b3a0734563faed8, type: 3}
+      insertIndex: -1
+      addedObject: {fileID: 8642435716474064980}
+    - targetCorrespondingSourceObject: {fileID: 6435677268899838634, guid: 851d5372e25dbc649b3a0734563faed8, type: 3}
+      insertIndex: -1
+      addedObject: {fileID: 8690011136324159717}
   m_SourcePrefab: {fileID: 100100000, guid: 851d5372e25dbc649b3a0734563faed8, type: 3}
+--- !u!1 &3687653200655456493 stripped
+GameObject:
+  m_CorrespondingSourceObject: {fileID: 6435677268899838634, guid: 851d5372e25dbc649b3a0734563faed8, type: 3}
+  m_PrefabInstance: {fileID: 7673345881645654599}
+  m_PrefabAsset: {fileID: 0}
+--- !u!114 &8642435716474064980
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 3687653200655456493}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 397b83d5309de4b46ada1d57ca38bef6, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::SchoolEscape.Rooms.RoomExitGate
+  unlocked: 0
+  opening: 0
+  doorRenderer: {fileID: 5189606316226826988}
+  materialSlot: 1
+  closedMaterial: {fileID: 2100000, guid: 8790d1b44e64d324a8b337238b3e00f3, type: 2}
+  openMaterial: {fileID: 2100000, guid: 56fce12478fe5eb47a7b2b7daf899f04, type: 2}
+  blockingCollider: {fileID: 4939646643227751592}
+  disappearWhenUnlocked: 1
+  connectionPieces:
+  - {fileID: 8484395324857373758}
+  - {fileID: 6537246037211554162}
+  onUnlocked:
+    m_PersistentCalls:
+      m_Calls: []
+--- !u!114 &8690011136324159717
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 3687653200655456493}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: ac3af386096827b48bdfecd3c784ed51, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::SchoolEscape.Rooms.RescueEntranceAnchor
+  direction: 3
+  gate: {fileID: 8642435716474064980}
+--- !u!65 &4939646643227751592 stripped
+BoxCollider:
+  m_CorrespondingSourceObject: {fileID: 3382226546394158831, guid: 851d5372e25dbc649b3a0734563faed8, type: 3}
+  m_PrefabInstance: {fileID: 7673345881645654599}
+  m_PrefabAsset: {fileID: 0}
+--- !u!23 &5189606316226826988 stripped
+MeshRenderer:
+  m_CorrespondingSourceObject: {fileID: 2483766111563215019, guid: 851d5372e25dbc649b3a0734563faed8, type: 3}
+  m_PrefabInstance: {fileID: 7673345881645654599}
+  m_PrefabAsset: {fileID: 0}
 --- !u!4 &7191918410239496207 stripped
 Transform:
   m_CorrespondingSourceObject: {fileID: 699149603036525128, guid: 851d5372e25dbc649b3a0734563faed8, type: 3}
