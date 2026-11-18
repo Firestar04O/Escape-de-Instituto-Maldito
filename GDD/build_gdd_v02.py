@@ -519,7 +519,7 @@ def build_document():
         [
             ["Estado", "Documento de diseño consolidado para el MVP"],
             ["Fecha", "17 de noviembre de 2026"],
-            ["Plataforma principal", "Android API 25 o superior en orientacion horizontal fija"],
+            ["Plataforma principal", "Android API 25 o superior en orientacion horizontal"],
             ["Jugadores", "2 a 4 jugadores en linea"],
             ["Duracion objetivo", "5 a 15 minutos por partida"],
             ["Meta tecnica", "30 FPS estables en el dispositivo de referencia"],
@@ -572,6 +572,7 @@ def build_document():
             "Prueba termica provisional: 15 minutos continuos sin caidas graves de rendimiento ni cierre de la aplicacion.",
             "Los controles principales deben funcionar mediante pantalla tactil. Teclado y raton se mantienen como soporte de desarrollo.",
             "La interfaz debe adaptarse a diferentes relaciones de aspecto horizontales sin tapar el espacio jugable.",
+            "La correccion del cambio entre ambos sentidos horizontales queda como tarea de baja prioridad y no bloquea el encadenado de salas ni las pruebas del Director y la IA.",
         ],
     )
     add_body(
@@ -588,7 +589,7 @@ def build_document():
             "Creacion de partida y union mediante codigo.",
             "Seis salas por partida: Salon 1, Salon 2, Salon 3, Cafeteria 1, Cafeteria 2 y Cafeteria 3.",
             "Los salones utilizan una palanca y las cafeterias utilizan tres palancas obligatorias.",
-            "Despues de completar las palancas, la puerta tarda inicialmente 8 segundos en abrirse y el Director aumenta temporalmente su actividad.",
+            "Despues de completar las palancas, la puerta inicia una espera configurable. La implementacion validada utiliza 8 segundos y la siguiente prueba de estres utilizara temporalmente 30 segundos con mayor actividad del Director.",
             "Dos enemigos: Chiquito y Normal.",
             "Salud, estado vulnerable, arrastre, rapto, espectador y rescate posterior.",
             "Flash consumible, vendas, lockers, pickups y objetos soltados por jugadores.",
@@ -646,7 +647,7 @@ def build_document():
         "El equipo explora, abre lockers y administra sus recursos.",
         "El Director aumenta la actividad y asigna roles a los enemigos.",
         "El equipo localiza y activa la palanca del salon o las tres palancas de la cafeteria.",
-        "La puerta inicia una apertura de 8 segundos durante la cual el Director aumenta temporalmente la actividad.",
+        "La puerta inicia la espera configurada durante la cual el Director aumenta temporalmente la actividad. La version validada utiliza 8 segundos; la siguiente iteracion probara 30 segundos como escenario de supervivencia y estres.",
         "Al terminar la cuenta, la puerta cambia al material abierto, deja de bloquear el paso y los jugadores libres cruzan la salida. Quien este siendo arrastrado cuenta como raptado al abandonar la sala.",
         "La siguiente sala aparece con una zona de rescate visible si existe algun cautivo recuperable.",
         "El ciclo se repite hasta completar seis salas.",
@@ -718,7 +719,7 @@ def build_document():
             "La salida comienza bloqueada y utiliza el material de puerta cerrada; cada palanca requiere una interaccion canalizada de 1.5 segundos.",
             "Cada palanca solo puede activarse una vez y el HUD informa cuantas faltan.",
             "El servidor valida distancia, estado del jugador y disponibilidad de cada palanca.",
-            "Al completar todas las palancas requeridas, comienza una espera inicial configurable de 8 segundos.",
+            "Al completar todas las palancas requeridas, comienza una espera configurable. La base validada es de 8 segundos y la prueba temporal de balance sera de 30 segundos.",
             "Durante la espera el Director aumenta temporalmente la actividad y el HUD muestra la cuenta regresiva.",
             "Al terminar, la puerta aplica el material de puerta abierta, desactiva su colision y permite completar la sala al cruzarla, sin exigir otra pulsacion tactil.",
         ],
@@ -767,6 +768,10 @@ def build_document():
         doc,
         "El Director controla ritmo, apariciones y asignacion tactica. No utiliza una sola cifra interna: combina un peligro base permanente durante la partida con actividad reciente que disminuye si el equipo deja de generar ruido.",
     )
+    add_body(
+        doc,
+        "La siguiente iteracion prioriza una prueba de estres durante la apertura de 30 segundos. El Director podra generar una oleada numerosa para medir presion, mientras la IA mejora la persecucion, el cierre de rutas y la capacidad de alcanzar, arrastrar y raptar al jugador sin apariciones injustas.",
+    )
     add_table(
         doc,
         ["Componente", "Aumenta por", "Efecto"],
@@ -809,6 +814,10 @@ def build_document():
     add_body(
         doc,
         "Una partida del MVP contiene seis salas. Los tres salones y las tres cafeterias reutilizan reglas y componentes, pero varian recorridos, mobiliario, palancas, lockers, portales e iluminacion.",
+    )
+    add_body(
+        doc,
+        "Estado actual: las distribuciones de Salon 1, Salon 2, Salon 3, Cafeteria 1, Cafeteria 2 y Cafeteria 3 estan construidas. Las tres cafeterias fueron recorridas y sus puertas, tres palancas, objetos y salidas funcionan. Se corrigieron colisiones faltantes en mesas; quedan ajustes visuales y de paredes que no bloquean la integracion funcional. Cafeteria 3 puede iniciar desde sus puntos de aparicion sin representar una entrada fisica.",
     )
     add_table(
         doc,
@@ -908,7 +917,7 @@ def build_document():
             ["Flash por pila", "1", "Confirmado para MVP"],
             ["Stun enemigo Normal", "1.2 segundos", "Base del prototipo"],
             ["Activacion del panel", "1.5 segundos", "Valor inicial"],
-            ["Apertura de la puerta", "8 segundos", "Estimacion configurable para PlayMode"],
+            ["Apertura de la puerta", "8 s validados; prueba temporal de 30 s", "Configurable para balance y estres"],
             ["Aumento durante apertura", "+1.25 al multiplicador de peligro", "Estimacion configurable"],
             ["Apertura de locker", "2 segundos", "Valor inicial"],
             ["Invulnerabilidad al liberar", "1.5 segundos", "Valor inicial"],
@@ -972,19 +981,21 @@ def build_document():
             ["ARCH-01", "[x]", "Separar jugador, enemigos, inventario, salas, UI e interactuables.", "Los sistemas principales existen en componentes distintos."],
             ["ROOM-01", "[x]", "Disponer de Salon 1, Salon 2 y Salon 3 diseñados y probados.", "Recorrer cada salon sin atravesar ni quedar atrapado en geometria."],
             ["ROOM-02", "[x]", "Usar Cafeteria 1 como plantilla funcional.", "Validar spawns, palancas, salida e interactuables de Cafeteria 1."],
-            ["ROOM-03", "[ ]", "Integrar Cafeteria 2 y Cafeteria 3 en Unity.", "Abrir y completar ambas variantes desde el proyecto."],
+            ["ROOM-03", "[x]", "Integrar y probar Cafeteria 2 y Cafeteria 3 en Unity.", "Abrir, activar las tres palancas y completar ambas variantes desde el proyecto."],
             ["OBJ-01", "[x]", "Requerir una palanca en cada salon.", "Activar la palanca y observar el inicio de apertura."],
             ["OBJ-02", "[x]", "Requerir las tres palancas en cada cafeteria.", "Confirmar que una o dos no bastan y que la tercera inicia la apertura."],
-            ["OBJ-03", "[x]", "Esperar 8 segundos con mayor peligro antes de abrir la salida.", "Comprobar cuenta, presion temporal, material y colision de la puerta."],
+            ["OBJ-03", "[x]", "Esperar el tiempo configurado con mayor peligro antes de abrir la salida.", "Comprobar la base validada de 8 segundos, la cuenta, la presion, el material y la colision."],
             ["MOVE-01", "[x]", "Mantener velocidad constante en movimiento cardinal y diagonal.", "Comparar recorridos rectos y diagonales durante el mismo tiempo."],
             ["COL-01", "[x]", "Evitar atravesamientos y enganches aparentes en los mapas actuales.", "Recorrer paredes, muebles, esquinas y puertas en PC y telefono."],
             ["CAP-01", "[x]", "Ocultar al aliado cuando es raptado.", "Dejar que llegue al portal y comprobar que ya no se renderiza."],
             ["INV-01", "[x]", "Permitir usar una venda con vida incompleta.", "Recibir daño, recoger una venda y recuperar tres corazones."],
             ["UI-01", "[x]", "Mostrar joystick, flash, interaccion, venda, objetivo y peligro.", "Verificar todos los controles en MobileHUD."],
-            ["UI-02", "[x]", "Bloquear la aplicacion en horizontal para evitar rotacion ciclica.", "Sostener el telefono vertical y confirmar que la vista no alterna."],
+            ["UI-02", "[ ]", "Aceptar ambos sentidos horizontales sin rotacion ciclica al sostener el telefono vertical.", "Iniciar y girar el telefono en sus cuatro posiciones; solo los dos horizontales deben cambiar la vista."],
             ["ART-01", "[x]", "Definir personajes, paredes, mobiliario y estilo 2D en Miro.", "Adjuntar el tablero o capturas como anexo del GDD."],
-            ["ART-02", "[ ]", "Aplicar el estilo final a salas, muebles, items, jugadores y zombis.", "Revisar una sala modelo completa y legible."],
+            ["ART-02", "[ ]", "Completar la mitad restante del estilo de salas, muebles, items, jugadores y zombis.", "Revisar las seis distribuciones con una direccion visual consistente y legible."],
             ["SESSION-01", "[ ]", "Encadenar las seis salas en una partida.", "Completar seis transiciones y mostrar el resultado final."],
+            ["BAL-01", "[ ]", "Probar temporalmente una apertura de 30 segundos con aparicion masiva.", "Sobrevivir la cuenta, registrar presion y ajustar cantidad, ritmo y justicia de los spawns."],
+            ["DIR-01", "[ ]", "Mejorar el Director y la IA para perseguir, cerrar rutas y capturar al jugador.", "Observar enemigos capaces de alcanzar, arrastrar y raptar sin aparecer injustamente encima del jugador."],
             ["NET-01", "[ ]", "Sincronizar reglas principales para dos a cuatro jugadores.", "Completar una partida de dos jugadores por Internet."],
         ],
         widths=[0.8, 0.65, 3.0, 2.15],
@@ -1008,6 +1019,8 @@ def build_document():
             ["QA-10", "Telefono", "Sostener el dispositivo vertical y girarlo levemente.", "La pantalla permanece en una sola orientacion horizontal."],
             ["QA-11", "Telefono", "Jugar 15 minutos seguidos.", "No hay cierre, sobrecalentamiento grave ni degradacion evidente."],
             ["QA-12", "Unity", "Validar cada prefab de sala.", "No hay scripts perdidos, referencias nulas ni salidas sin configurar."],
+            ["QA-13", "PC y telefono", "Configurar 30 segundos y activar la tercera palanca de una cafeteria.", "El Director genera una prueba de supervivencia intensa sin spawns injustos ni bloqueo inevitable."],
+            ["QA-14", "PC y telefono", "Dejar que la IA persiga a un jugador vulnerable durante la oleada.", "El enemigo cierra distancia, inicia el arrastre y puede completar el rapto si no recibe ayuda."],
         ],
         widths=[0.8, 1.1, 2.7, 2.0],
         center_cols=[0, 1],

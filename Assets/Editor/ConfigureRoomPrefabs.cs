@@ -12,14 +12,16 @@ internal static class ConfigureRoomPrefabs
 
     private static readonly RoomEntry[] Rooms =
     {
-        new RoomEntry(Folder + "/Salon1.prefab", "salon_1", RoomArchetype.Classroom),
-        new RoomEntry(Folder + "/Salon2.prefab", "salon_2", RoomArchetype.Classroom),
-        new RoomEntry(Folder + "/Salon3.prefab", "salon_3", RoomArchetype.Classroom),
-        new RoomEntry(Folder + "/Cafeteria1.prefab", "cafeteria_1", RoomArchetype.Cafeteria)
+        new RoomEntry(Folder + "/Mapa_Salon1.prefab", "salon_1", RoomArchetype.Classroom),
+        new RoomEntry(Folder + "/Mapa_Salon2.prefab", "salon_2", RoomArchetype.Classroom),
+        new RoomEntry(Folder + "/Mapa_Salon3.prefab", "salon_3", RoomArchetype.Classroom),
+        new RoomEntry(Folder + "/Mapa_Cafeteria1.prefab", "cafeteria_1", RoomArchetype.Cafeteria),
+        new RoomEntry(Folder + "/Mapa_Cafeteria2.prefab", "cafeteria_2", RoomArchetype.Cafeteria),
+        new RoomEntry(Folder + "/Mapa_Cafeteria3.prefab", "cafeteria_3", RoomArchetype.Cafeteria)
     };
 
     [MenuItem("Tools/School Escape/Configure All Room Prefabs")]
-    private static void ConfigureAll()
+    public static void ConfigureAll()
     {
         Material closedDoorMaterial = AssetDatabase.LoadAssetAtPath<Material>(ClosedDoorMaterialPath);
         Material openDoorMaterial = AssetDatabase.LoadAssetAtPath<Material>(OpenDoorMaterialPath);
@@ -29,7 +31,7 @@ internal static class ConfigureRoomPrefabs
         AssetDatabase.SaveAssets();
         EditorUtility.DisplayDialog(
             "Room prefabs configured",
-            "Configured Salon1, Salon2, Salon3 and Cafeteria1. See Console for validation details.",
+            "Configured all six Mapa_ prefabs. See Console for validation details.",
             "OK");
     }
 

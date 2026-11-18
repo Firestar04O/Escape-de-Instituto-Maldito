@@ -29,6 +29,13 @@ public class PrototypeAlly : PrototypeActor
         if (delta.magnitude > 1.2f) Move(delta.normalized * 4.3f);
     }
 
+    public void ApplyNetworkMovement(Vector3 velocity)
+    {
+        if (velocity.sqrMagnitude > .01f)
+            transform.rotation = Quaternion.Slerp(transform.rotation, Quaternion.LookRotation(velocity.normalized), Time.deltaTime * 14f);
+        Move(velocity);
+    }
+
     protected override void OnDowned()
     {
         RescueInteraction.enabled = true;
@@ -41,6 +48,7 @@ public class PrototypeAlly : PrototypeActor
         RescueInteraction.enabled = false;
         SetPresentationVisible(false);
         Session.ShowMessage("Compañero cautivo: el peligro aumenta", 4f);
+        Session.NotifyAllyCaptured();
     }
 
     public override void Rescue()
@@ -49,6 +57,7 @@ public class PrototypeAlly : PrototypeActor
         base.Rescue();
         RescueInteraction.enabled = false;
         Session.ShowMessage("Compañero rescatado", 3f);
+        Session.NotifyAllyRescued();
     }
 
     public override void RescueFromDrag()
@@ -69,5 +78,16 @@ public class PrototypeAlly : PrototypeActor
         if (Controller != null)
             Controller.enabled = visible;
     }
+
+    public void PlaceCaptiveForRescue(Vector3 position)
+    {
+        if (!IsCaptive) return;
+        if (Controller != null) Controller.enabled = false;
+        transform.position = position;
+        SetPresentationVisible(true);
+        if (Controller != null) Controller.enabled = false;
+        RescueInteraction.enabled = true;
+    }
+
 }
 

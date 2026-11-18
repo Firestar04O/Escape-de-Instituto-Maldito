@@ -1,0 +1,22 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 9a03a7b094a84ad5ab0de51dcc70976f, type: 3}
+  m_Name: RoomSequenceCatalog
+  m_EditorClassIdentifier: Assembly-CSharp::SchoolEscape.Rooms.RoomSequenceCatalog
+  rooms:
+  - {fileID: 5443730305754369004, guid: b5f27d2d79121214db63ba4d3860dba3, type: 3}
+  - {fileID: 7180089003151436362, guid: df191e51cb1087440b5c63aadc0e788f, type: 3}
+  - {fileID: 520801269022307336, guid: 839abcee5be828d48b96c06ea45bb8c9, type: 3}
+  - {fileID: 5449068258013110235, guid: 787fe5061fe1fee4f9f30818dd4461b7, type: 3}
+  - {fileID: 6055140493105940783, guid: 058ce3c01647cd047bd8a3c82dba47e9, type: 3}
+  - {fileID: 3409084242025530824, guid: e1f912c5ff44d0c4780d94a9a9b3b17a, type: 3}
+  rescueRoom: {fileID: 8950344494835414699, guid: 045065dff4c96284a9535e5a33fbdc88, type: 3}

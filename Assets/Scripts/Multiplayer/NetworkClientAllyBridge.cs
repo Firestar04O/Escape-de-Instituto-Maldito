@@ -1,0 +1,362 @@
+using Unity.Collections;
+using Unity.Netcode;
+using UnityEngine;
+using UnityEngine.InputSystem;
+using UnityEngine.InputSystem.EnhancedTouch;
+using Touch = UnityEngine.InputSystem.EnhancedTouch.Touch;
+
+namespace SchoolEscape.Multiplayer
+{
+    [RequireComponent(typeof(NetworkObject), typeof(PrototypeAlly))]
+    public sealed class NetworkClientAllyBridge : NetworkBehaviour
+    {
+        private const float Speed = 5.8f;
+        private const float SendInterval = 1f / 20f;
+        private const float FlashAimThreshold = 48f;
+        private const float FlashCancelRadius = 32f;
+
+        public static NetworkClientAllyBridge LocalOwner { get; private set; }
+
+        private readonly NetworkVariable<int> syncedHealth = new NetworkVariable<int>(3);
+        private readonly NetworkVariable<int> syncedBatteries = new NetworkVariable<int>();
+        private readonly NetworkVariable<int> syncedBandages = new NetworkVariable<int>();
+        private readonly NetworkVariable<float> syncedDanger = new NetworkVariable<float>(1f);
+        private readonly NetworkVariable<bool> syncedVictory = new NetworkVariable<bool>();
+        private readonly NetworkVariable<bool> syncedDefeat = new NetworkVariable<bool>();
+        private readonly NetworkVariable<FixedString64Bytes> syncedRoom = new NetworkVariable<FixedString64Bytes>();
+        private readonly NetworkVariable<FixedString64Bytes> syncedExit = new NetworkVariable<FixedString64Bytes>();
+        private readonly NetworkVariable<FixedString128Bytes> syncedInteraction = new NetworkVariable<FixedString128Bytes>();
+
+        private PrototypeAlly ally;
+        private SchoolEscapePrototype session;
+        private PrototypeInteractable currentInteraction;
+        private Vector2 serverInput;
+        private float interactionProgress;
+        private float nextSendTime;
+        private float nextFlashTime;
+        private int moveFinger = -1;
+        private bool uiInteractHeld;
+        private bool serverInteractHeld;
+        private bool aimingFlash;
+        private bool flashUsesMouse;
+        private bool manualFlashAim;
+        private bool flashWasDragged;
+        private int flashFinger = -1;
+        private Vector2 flashPressPosition;
+        private Vector3 flashAimDirection = Vector3.forward;
+        private GameObject aimIndicator;
+
+        public int DisplayHealth => syncedHealth.Value;
+        public int DisplayBatteries => syncedBatteries.Value;
+        public int DisplayBandages => syncedBandages.Value;
+        public float DisplayDanger => syncedDanger.Value;
+        public bool DisplayVictory => syncedVictory.Value;
+        public bool DisplayDefeat => syncedDefeat.Value;
+        public string DisplayRoom => syncedRoom.Value.IsEmpty ? "Sala" : syncedRoom.Value.ToString();
+        public string DisplayExit => syncedExit.Value.IsEmpty ? "bloqueada" : syncedExit.Value.ToString();
+        public string InteractionStatus => syncedInteraction.Value.IsEmpty ? "Sin objetivo cercano" : syncedInteraction.Value.ToString();
+
+        public override void OnNetworkSpawn()
+        {
+            ally = GetComponent<PrototypeAlly>();
+            session = FindFirstObjectByType<SchoolEscapePrototype>();
+            ally.enabled = false;
+            if (IsOwner && IsClient) LocalOwner = this;
+            if (session != null) session.AttachNetworkClientAlly(ally, IsOwner);
+        }
+
+        public override void OnNetworkDespawn()
+        {
+            if (LocalOwner == this) LocalOwner = null;
+            if (aimIndicator != null) Destroy(aimIndicator);
+        }
+
+        private void Update()
+        {
+            if (IsOwner && IsClient)
+            {
+                UpdateFlashButtonInput();
+                if (Keyboard.current != null && Keyboard.current.bKey.wasPressedThisFrame)
+                    RequestBandage();
+                if (!aimingFlash && Keyboard.current != null && Keyboard.current.spaceKey.wasPressedThisFrame)
+                    RequestFlash();
+
+                if (Time.unscaledTime >= nextSendTime)
+                {
+                    nextSendTime = Time.unscaledTime + SendInterval;
+                    bool keyboardInteract = Keyboard.current != null && Keyboard.current.eKey.isPressed;
+                    SubmitInputRpc(ReadMove(), uiInteractHeld || keyboardInteract);
+                }
+            }
+
+            if (!IsServer || ally == null || session == null) return;
+
+            SyncHudState();
+            if (ally.IsDown || ally.IsCaptive || ally.Dragger != null)
+            {
+                serverInput = Vector2.zero;
+                UpdateServerInteraction(false);
+                return;
+            }
+
+            Vector3 direction = new Vector3(serverInput.x, 0f, serverInput.y);
+            if (direction.sqrMagnitude > 1f) direction.Normalize();
+            ally.ApplyNetworkMovement(direction * Speed);
+            UpdateServerInteraction(serverInteractHeld);
+        }
+
+        public void SetInteractHeld(bool held) => uiInteractHeld = held;
+
+        public void RequestBandage()
+        {
+            if (IsOwner && IsClient) UseBandageRpc();
+        }
+
+        public void RequestFlash()
+        {
+            if (IsOwner && IsClient) UseFlashRpc(Vector3.zero);
+        }
+
+        [Rpc(SendTo.Server, InvokePermission = RpcInvokePermission.Owner)]
+        private void SubmitInputRpc(Vector2 input, bool interactHeld)
+        {
+            serverInput = Vector2.ClampMagnitude(input, 1f);
+            serverInteractHeld = interactHeld;
+        }
+
+        [Rpc(SendTo.Server, InvokePermission = RpcInvokePermission.Owner)]
+        private void UseBandageRpc()
+        {
+            if (session != null && ally != null) session.UseBandageFor(ally);
+        }
+
+        [Rpc(SendTo.Server, InvokePermission = RpcInvokePermission.Owner)]
+        private void UseFlashRpc(Vector3 requestedDirection)
+        {
+            if (Time.time < nextFlashTime || session == null || ally == null || ally.IsDown || ally.IsCaptive) return;
+            nextFlashTime = Time.time + .25f;
+            session.FireFlashFor(ally, requestedDirection);
+        }
+
+        private void UpdateServerInteraction(bool pressed)
+        {
+            PrototypeInteractable closest = session.ClosestInteractable(ally.transform.position, 2.8f);
+            if (closest == null)
+            {
+                interactionProgress = 0f;
+                currentInteraction = null;
+                SetInteractionStatus(pressed ? "Botón detectado, sin objeto cercano" : "Sin objetivo cercano");
+                return;
+            }
+
+            if (!pressed)
+            {
+                interactionProgress = 0f;
+                currentInteraction = null;
+                SetInteractionStatus($"Cerca: {closest.Prompt}");
+                return;
+            }
+
+            if (currentInteraction != closest)
+            {
+                currentInteraction = closest;
+                interactionProgress = 0f;
+            }
+
+            interactionProgress += Time.deltaTime;
+            float percent = Mathf.Min(100f, interactionProgress / closest.Duration * 100f);
+            SetInteractionStatus($"{closest.Prompt} {percent:0}%");
+            if (interactionProgress < closest.Duration) return;
+
+            closest.Complete(ally);
+            interactionProgress = 0f;
+            currentInteraction = null;
+        }
+
+        private void SyncHudState()
+        {
+            syncedHealth.Value = ally != null ? ally.Health : 0;
+            syncedBatteries.Value = session.Batteries;
+            syncedBandages.Value = session.Bandages;
+            syncedDanger.Value = session.DangerMultiplier;
+            syncedVictory.Value = session.Victory;
+            syncedDefeat.Value = session.Defeat;
+            SetFixed(syncedRoom, session.RoomProgressText);
+            SetFixed(syncedExit, session.ExitStatusText);
+        }
+
+        private void SetInteractionStatus(string value)
+        {
+            FixedString128Bytes next = new FixedString128Bytes(value);
+            if (!syncedInteraction.Value.Equals(next)) syncedInteraction.Value = next;
+        }
+
+        private static void SetFixed(NetworkVariable<FixedString64Bytes> target, string value)
+        {
+            FixedString64Bytes next = new FixedString64Bytes(value);
+            if (!target.Value.Equals(next)) target.Value = next;
+        }
+
+        private Vector2 ReadMove()
+        {
+            Vector2 value = Vector2.zero;
+            if (Keyboard.current != null)
+            {
+                if (Keyboard.current.aKey.isPressed) value.x -= 1f;
+                if (Keyboard.current.dKey.isPressed) value.x += 1f;
+                if (Keyboard.current.sKey.isPressed) value.y -= 1f;
+                if (Keyboard.current.wKey.isPressed) value.y += 1f;
+            }
+
+            Vector2 center = session != null && session.MobileHud != null
+                ? session.MobileHud.MovementCenterScreen
+                : new Vector2(112f, 108f);
+            float radius = session != null && session.MobileHud != null
+                ? session.MobileHud.MovementRadiusScreen
+                : 65f;
+
+            if (EnhancedTouchSupport.enabled)
+            {
+                foreach (Touch touch in Touch.activeTouches)
+                {
+                    Vector2 point = touch.screenPosition;
+                    if ((moveFinger < 0 && point.x < Screen.width * .42f && point.y < Screen.height * .42f) || touch.finger.index == moveFinger)
+                    {
+                        moveFinger = touch.finger.index;
+                        value = Vector2.ClampMagnitude((point - center) / radius, 1f);
+                        if (touch.phase == UnityEngine.InputSystem.TouchPhase.Ended || touch.phase == UnityEngine.InputSystem.TouchPhase.Canceled)
+                            moveFinger = -1;
+                        break;
+                    }
+                }
+                if (Touch.activeTouches.Count == 0) moveFinger = -1;
+            }
+
+            if (Mouse.current != null && Mouse.current.leftButton.isPressed)
+            {
+                Vector2 point = Mouse.current.position.ReadValue();
+                if (point.x < Screen.width * .42f && point.y < Screen.height * .42f)
+                    value = Vector2.ClampMagnitude((point - center) / radius, 1f);
+            }
+
+            return value;
+        }
+
+        private void UpdateFlashButtonInput()
+        {
+            if (session == null || ally == null) return;
+            Rect button = session.FlashButtonScreenRect();
+            Mouse mouse = Mouse.current;
+
+            if (!aimingFlash && mouse != null && mouse.leftButton.wasPressedThisFrame)
+            {
+                Vector2 point = mouse.position.ReadValue();
+                if (button.Contains(ToTopLeft(point)))
+                    BeginFlashAim(point, true, -1);
+            }
+
+            if (aimingFlash && flashUsesMouse && mouse != null)
+            {
+                UpdateFlashAim(mouse.position.ReadValue());
+                if (mouse.leftButton.wasReleasedThisFrame) EndFlashAim();
+                return;
+            }
+
+            if (!EnhancedTouchSupport.enabled) return;
+            foreach (Touch touch in Touch.activeTouches)
+            {
+                if (!aimingFlash && touch.phase == UnityEngine.InputSystem.TouchPhase.Began &&
+                    button.Contains(ToTopLeft(touch.screenPosition)))
+                {
+                    BeginFlashAim(touch.screenPosition, false, touch.finger.index);
+                    break;
+                }
+
+                if (aimingFlash && !flashUsesMouse && touch.finger.index == flashFinger)
+                {
+                    UpdateFlashAim(touch.screenPosition);
+                    if (touch.phase == UnityEngine.InputSystem.TouchPhase.Ended ||
+                        touch.phase == UnityEngine.InputSystem.TouchPhase.Canceled)
+                        EndFlashAim();
+                    break;
+                }
+            }
+        }
+
+        private static Vector2 ToTopLeft(Vector2 bottomLeftPosition) =>
+            new Vector2(bottomLeftPosition.x, Screen.height - bottomLeftPosition.y);
+
+        private void BeginFlashAim(Vector2 screenPosition, bool mouse, int finger)
+        {
+            aimingFlash = true;
+            flashUsesMouse = mouse;
+            flashFinger = finger;
+            flashPressPosition = screenPosition;
+            flashAimDirection = ally != null ? ally.transform.forward : Vector3.forward;
+            manualFlashAim = false;
+            flashWasDragged = false;
+        }
+
+        private void UpdateFlashAim(Vector2 screenPosition)
+        {
+            Vector2 drag = screenPosition - flashPressPosition;
+            float distance = drag.magnitude;
+            if (distance >= FlashAimThreshold) flashWasDragged = true;
+
+            if (flashWasDragged && distance <= FlashCancelRadius)
+            {
+                manualFlashAim = false;
+                if (aimIndicator != null) aimIndicator.SetActive(false);
+                return;
+            }
+            if (!flashWasDragged) return;
+
+            manualFlashAim = true;
+            flashAimDirection = new Vector3(drag.x, 0f, drag.y).normalized;
+            ShowAimIndicator(flashAimDirection);
+        }
+
+        private void EndFlashAim()
+        {
+            if (manualFlashAim)
+                UseFlashRpc(flashAimDirection);
+            else if (!flashWasDragged)
+                RequestFlash();
+
+            aimingFlash = false;
+            flashUsesMouse = false;
+            manualFlashAim = false;
+            flashWasDragged = false;
+            flashFinger = -1;
+            if (aimIndicator != null) Destroy(aimIndicator);
+        }
+
+        private void ShowAimIndicator(Vector3 direction)
+        {
+            if (aimIndicator == null)
+            {
+                aimIndicator = new GameObject("Indicador de cono del flash (cliente)");
+                CreateIndicatorRay(aimIndicator.transform, 0f);
+                CreateIndicatorRay(aimIndicator.transform, -35f);
+                CreateIndicatorRay(aimIndicator.transform, 35f);
+            }
+
+            aimIndicator.SetActive(true);
+            aimIndicator.transform.position = ally.transform.position;
+            aimIndicator.transform.rotation = Quaternion.LookRotation(direction);
+        }
+
+        private static void CreateIndicatorRay(Transform parent, float angle)
+        {
+            GameObject ray = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            ray.name = "Borde del cono";
+            Destroy(ray.GetComponent<Collider>());
+            ray.transform.SetParent(parent, false);
+            ray.transform.localRotation = Quaternion.Euler(0f, angle, 0f);
+            float radians = angle * Mathf.Deg2Rad;
+            ray.transform.localPosition = new Vector3(Mathf.Sin(radians) * 2.5f, .12f, Mathf.Cos(radians) * 2.5f);
+            ray.transform.localScale = new Vector3(.08f, .04f, 5f);
+            ray.GetComponent<Renderer>().material = SchoolEscapePrototype.MakeMaterial(new Color(1f, .82f, .16f));
+        }
+    }
+}

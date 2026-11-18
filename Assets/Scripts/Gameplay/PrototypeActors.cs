@@ -7,6 +7,8 @@ public abstract class PrototypeActor : MonoBehaviour
     public bool IsDown => Health <= 0;
     public bool IsCaptive { get; protected set; }
     public PrototypeEnemy Dragger { get; private set; }
+    public bool IsBeingDragged => Dragger != null;
+    public bool CanDrawEnemyAggro => !IsCaptive && !IsBeingDragged;
     public bool CanBeDragged => IsDown && !IsCaptive && Dragger == null;
     protected CharacterController Controller;
     private float nextDamageTime;

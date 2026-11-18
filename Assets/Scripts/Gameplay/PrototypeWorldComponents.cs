@@ -12,8 +12,8 @@ public class PrototypeCamera : MonoBehaviour
     public void Initialize(SchoolEscapePrototype gameSession) => session = gameSession;
     private void LateUpdate()
     {
-        if (session == null || session.Player == null) return;
-        Vector3 target = session.Player.transform.position + new Vector3(0f, 17f, -10f);
+        if (session == null || session.CameraFollowTarget == null) return;
+        Vector3 target = session.CameraFollowTarget.position + new Vector3(0f, 17f, -10f);
         transform.position = Vector3.SmoothDamp(transform.position, target, ref velocity, .18f);
         transform.rotation = Quaternion.Euler(59f, 0f, 0f);
     }

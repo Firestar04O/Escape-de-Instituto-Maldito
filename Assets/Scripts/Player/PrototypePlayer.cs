@@ -85,6 +85,7 @@ public class PrototypePlayer : PrototypeActor
         float joystickRadius = Session.MobileHud != null
             ? Session.MobileHud.MovementRadiusScreen
             : 65f;
+        if (!EnhancedTouchSupport.enabled) return value;
         foreach (Touch touch in Touch.activeTouches)
         {
             Vector2 p = touch.screenPosition;

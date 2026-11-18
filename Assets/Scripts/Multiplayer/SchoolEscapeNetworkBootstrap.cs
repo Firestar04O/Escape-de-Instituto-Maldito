@@ -1,0 +1,457 @@
+using System;
+using System.Linq;
+using System.Net.NetworkInformation;
+using System.Collections.Generic;
+using Unity.Collections;
+using Unity.Netcode;
+using Unity.Netcode.Transports.UTP;
+using UnityEngine;
+
+namespace SchoolEscape.Multiplayer
+{
+    [DisallowMultipleComponent]
+    public sealed class SchoolEscapeNetworkBootstrap : MonoBehaviour
+    {
+        public const ushort DefaultPort = 7977;
+
+        public static SchoolEscapeNetworkBootstrap Instance { get; private set; }
+        public string Status { get; private set; } = "Sin conexión";
+        public bool IsListening => manager != null && manager.IsListening;
+        public bool HasRemoteClient => manager != null && manager.IsServer && remoteClientId.HasValue;
+
+        private const string HostPlayerResource = "Multiplayer/NetworkHostPlayer";
+        private const string ClientAllyResource = "Multiplayer/NetworkClientAlly";
+        private const string EnemySnapshotMessage = "SchoolEscape.EnemySnapshot";
+        private const float EnemySnapshotInterval = .1f;
+
+        private SchoolEscapePrototype session;
+        private NetworkManager manager;
+        private UnityTransport transport;
+        private GameObject hostPlayerPrefab;
+        private GameObject clientAllyPrefab;
+        private NetworkObject remoteAlly;
+        private bool startInProgress;
+        private ushort activePort = DefaultPort;
+        private ulong? remoteClientId;
+        private float nextEnemySnapshotTime;
+        private bool enemyHandlerRegistered;
+        private readonly List<EnemyVisualProxy> enemyVisuals = new List<EnemyVisualProxy>();
+
+        public int RemoteEnemyCount => enemyVisuals.Count;
+        public int RemoteNormalEnemyCount { get; private set; }
+        public int RemoteSmallEnemyCount { get; private set; }
+
+        private sealed class EnemyVisualProxy
+        {
+            public GameObject GameObject;
+            public Vector3 TargetPosition;
+            public Quaternion TargetRotation;
+            public bool IsSmall;
+        }
+
+        public static SchoolEscapeNetworkBootstrap EnsureFor(SchoolEscapePrototype gameSession)
+        {
+            if (Instance != null)
+            {
+                Instance.session = gameSession;
+                return Instance;
+            }
+
+            SchoolEscapeNetworkBootstrap existing = FindFirstObjectByType<SchoolEscapeNetworkBootstrap>();
+            if (existing != null)
+            {
+                existing.session = gameSession;
+                return existing;
+            }
+
+            GameObject root = new GameObject("School Escape Multiplayer");
+            SchoolEscapeNetworkBootstrap bootstrap = root.AddComponent<SchoolEscapeNetworkBootstrap>();
+            bootstrap.session = gameSession;
+            return bootstrap;
+        }
+
+        private void Awake()
+        {
+            if (Instance != null && Instance != this)
+            {
+                Destroy(gameObject);
+                return;
+            }
+
+            Instance = this;
+            ConfigureNetworkManager();
+        }
+
+        private void ConfigureNetworkManager()
+        {
+            manager = GetComponent<NetworkManager>();
+            if (manager == null) manager = gameObject.AddComponent<NetworkManager>();
+            transport = GetComponent<UnityTransport>();
+            if (transport == null) transport = gameObject.AddComponent<UnityTransport>();
+
+            hostPlayerPrefab = Resources.Load<GameObject>(HostPlayerResource);
+            clientAllyPrefab = Resources.Load<GameObject>(ClientAllyResource);
+            manager.NetworkConfig = new NetworkConfig
+            {
+                NetworkTransport = transport,
+                EnableSceneManagement = false,
+                ConnectionApproval = true,
+                TickRate = 30,
+                PlayerPrefab = null
+            };
+
+            if (hostPlayerPrefab != null) manager.AddNetworkPrefab(hostPlayerPrefab);
+            if (clientAllyPrefab != null) manager.AddNetworkPrefab(clientAllyPrefab);
+
+            manager.ConnectionApprovalCallback = ApproveConnection;
+            manager.OnClientConnectedCallback += OnClientConnected;
+            manager.OnClientDisconnectCallback += OnClientDisconnected;
+            manager.OnTransportFailure += OnTransportFailure;
+        }
+
+        private void Update()
+        {
+            if (manager == null || !manager.IsListening) return;
+
+            if (manager.IsServer && remoteClientId.HasValue && Time.unscaledTime >= nextEnemySnapshotTime)
+            {
+                nextEnemySnapshotTime = Time.unscaledTime + EnemySnapshotInterval;
+                SendEnemySnapshot(remoteClientId.Value);
+            }
+
+            if (!manager.IsClient || manager.IsServer) return;
+            float blend = 1f - Mathf.Exp(-16f * Time.unscaledDeltaTime);
+            foreach (EnemyVisualProxy proxy in enemyVisuals)
+            {
+                if (proxy.GameObject == null) continue;
+                proxy.GameObject.transform.position = Vector3.Lerp(proxy.GameObject.transform.position, proxy.TargetPosition, blend);
+                proxy.GameObject.transform.rotation = Quaternion.Slerp(proxy.GameObject.transform.rotation, proxy.TargetRotation, blend);
+            }
+        }
+
+        public bool StartHost(string endpoint)
+        {
+            if (!ValidatePrefabs()) return false;
+            if (manager.IsListening) return manager.IsHost;
+            if (startInProgress)
+            {
+                Status = "La conexión ya se está iniciando…";
+                return false;
+            }
+
+            ParseEndpoint(endpoint, out _, out activePort);
+            if (IsUdpPortInUse(activePort))
+            {
+                Status = $"Puerto {activePort} ocupado · prueba otro en IP:puerto";
+                return false;
+            }
+
+            startInProgress = true;
+            transport.SetConnectionData("127.0.0.1", activePort, "0.0.0.0");
+            Status = $"Iniciando host en puerto {activePort}…";
+            bool started;
+            try
+            {
+                started = manager.StartHost();
+            }
+            finally
+            {
+                startInProgress = false;
+            }
+
+            if (!started)
+            {
+                Status = $"No se pudo iniciar el host en el puerto {activePort}";
+                SafeShutdown();
+                return false;
+            }
+
+            Status = $"Host activo · puerto {activePort}";
+            SpawnHostPlayer();
+            return true;
+        }
+
+        public bool StartClient(string address)
+        {
+            if (!ValidatePrefabs()) return false;
+            if (manager.IsListening) return manager.IsClient && !manager.IsHost;
+            if (startInProgress)
+            {
+                Status = "La conexión ya se está iniciando…";
+                return false;
+            }
+
+            ParseEndpoint(address, out string target, out activePort);
+            transport.SetConnectionData(target, activePort);
+            Status = $"Conectando a {target}:{activePort}…";
+            startInProgress = true;
+            bool started;
+            try
+            {
+                started = manager.StartClient();
+            }
+            finally
+            {
+                startInProgress = false;
+            }
+            if (started) return true;
+
+            Status = $"No se pudo iniciar el cliente hacia {target}:{activePort}";
+            SafeShutdown();
+            return false;
+        }
+
+        public void StopSession()
+        {
+            SafeShutdown();
+            Status = "Sin conexión";
+        }
+
+        private static void ParseEndpoint(string endpoint, out string address, out ushort port)
+        {
+            address = "127.0.0.1";
+            port = DefaultPort;
+            if (string.IsNullOrWhiteSpace(endpoint)) return;
+
+            string value = endpoint.Trim();
+            int separator = value.LastIndexOf(':');
+            if (separator > 0 && separator < value.Length - 1 &&
+                ushort.TryParse(value.Substring(separator + 1), out ushort parsedPort))
+            {
+                address = value.Substring(0, separator).Trim();
+                port = parsedPort;
+                return;
+            }
+
+            address = value;
+        }
+
+        private static bool IsUdpPortInUse(ushort port)
+        {
+            try
+            {
+                return IPGlobalProperties.GetIPGlobalProperties()
+                    .GetActiveUdpListeners()
+                    .Any(endpoint => endpoint.Port == port);
+            }
+            catch (Exception exception)
+            {
+                Debug.LogWarning($"[Multiplayer] No se pudo comprobar el puerto {port}: {exception.Message}");
+                return false;
+            }
+        }
+
+        private void SafeShutdown()
+        {
+            startInProgress = false;
+            UnregisterEnemySnapshotHandler();
+            ClearEnemyVisuals();
+            remoteClientId = null;
+            if (manager == null || manager.ShutdownInProgress) return;
+            if (manager.IsListening || manager.IsClient || manager.IsServer)
+                manager.Shutdown();
+        }
+
+        private bool ValidatePrefabs()
+        {
+            if (hostPlayerPrefab != null && clientAllyPrefab != null) return true;
+            Status = "Faltan los prefabs de red. Ejecuta Tools/School Escape/Configurar multijugador.";
+            Debug.LogError("[Multiplayer] No se encontraron los prefabs de red en Resources/Multiplayer.");
+            return false;
+        }
+
+        private void ApproveConnection(NetworkManager.ConnectionApprovalRequest request, NetworkManager.ConnectionApprovalResponse response)
+        {
+            bool hasRoom = manager.ConnectedClientsIds.Count < 2;
+            response.Approved = hasRoom;
+            response.CreatePlayerObject = false;
+            response.Pending = false;
+            response.Reason = hasRoom ? string.Empty : "La partida admite un máximo de 2 jugadores.";
+        }
+
+        private void OnClientConnected(ulong clientId)
+        {
+            if (!manager.IsServer)
+            {
+                Status = "Conectado como jugador 2";
+                RegisterEnemySnapshotHandler();
+                return;
+            }
+
+            if (clientId == NetworkManager.ServerClientId) return;
+            remoteClientId = clientId;
+            Status = "Jugador 2 conectado";
+            SpawnClientAlly(clientId);
+            SendEnemySnapshot(clientId);
+        }
+
+        private void OnClientDisconnected(ulong clientId)
+        {
+            if (manager != null && manager.IsServer && clientId != NetworkManager.ServerClientId)
+            {
+                remoteClientId = null;
+                remoteAlly = null;
+                session?.RestoreSoloAllyAfterDisconnect();
+                Status = "Jugador 2 desconectado · continúa el aliado IA";
+                return;
+            }
+
+            if (manager != null && !manager.IsServer)
+            {
+                Status = string.IsNullOrWhiteSpace(manager.DisconnectReason) ? "Desconectado" : manager.DisconnectReason;
+                ClearEnemyVisuals();
+            }
+        }
+
+        private void SendEnemySnapshot(ulong clientId)
+        {
+            if (manager == null || !manager.IsServer || session == null) return;
+            IReadOnlyList<PrototypeEnemy> activeEnemies = session.ActiveEnemies;
+            int count = 0;
+            for (int index = 0; index < activeEnemies.Count; index++)
+                if (activeEnemies[index] != null) count++;
+
+            using FastBufferWriter writer = new FastBufferWriter(16 + count * 32, Allocator.Temp);
+            writer.WriteValueSafe(count);
+            for (int index = 0; index < activeEnemies.Count; index++)
+            {
+                PrototypeEnemy enemy = activeEnemies[index];
+                if (enemy == null) continue;
+                Vector3 position = enemy.transform.position;
+                Quaternion rotation = enemy.transform.rotation;
+                writer.WriteValueSafe(position);
+                writer.WriteValueSafe(rotation);
+                writer.WriteByteSafe(enemy.IsSmall ? (byte)1 : (byte)0);
+            }
+
+            manager.CustomMessagingManager.SendNamedMessage(
+                EnemySnapshotMessage,
+                clientId,
+                writer,
+                NetworkDelivery.UnreliableSequenced);
+        }
+
+        private void RegisterEnemySnapshotHandler()
+        {
+            if (enemyHandlerRegistered || manager == null || manager.CustomMessagingManager == null) return;
+            manager.CustomMessagingManager.RegisterNamedMessageHandler(EnemySnapshotMessage, ReceiveEnemySnapshot);
+            enemyHandlerRegistered = true;
+        }
+
+        private void ReceiveEnemySnapshot(ulong senderClientId, FastBufferReader reader)
+        {
+            reader.ReadValueSafe(out int count);
+            count = Mathf.Clamp(count, 0, 32);
+            EnsureEnemyVisualCount(count);
+            RemoteNormalEnemyCount = 0;
+            RemoteSmallEnemyCount = 0;
+
+            for (int index = 0; index < count; index++)
+            {
+                reader.ReadValueSafe(out Vector3 position);
+                reader.ReadValueSafe(out Quaternion rotation);
+                reader.ReadByteSafe(out byte smallValue);
+                bool isSmall = smallValue != 0;
+                EnemyVisualProxy proxy = enemyVisuals[index];
+                proxy.TargetPosition = position;
+                proxy.TargetRotation = rotation;
+                ConfigureEnemyVisual(proxy, isSmall);
+                if (isSmall) RemoteSmallEnemyCount++;
+                else RemoteNormalEnemyCount++;
+            }
+        }
+
+        private void EnsureEnemyVisualCount(int count)
+        {
+            while (enemyVisuals.Count < count)
+            {
+                GameObject visual = GameObject.CreatePrimitive(PrimitiveType.Capsule);
+                visual.name = "Cultista remoto";
+                Collider collider = visual.GetComponent<Collider>();
+                if (collider != null) Destroy(collider);
+                visual.GetComponent<Renderer>().material = SchoolEscapePrototype.MakeMaterial(new Color(.62f, .08f, .09f));
+                enemyVisuals.Add(new EnemyVisualProxy
+                {
+                    GameObject = visual,
+                    TargetPosition = visual.transform.position,
+                    TargetRotation = visual.transform.rotation
+                });
+            }
+
+            while (enemyVisuals.Count > count)
+            {
+                int last = enemyVisuals.Count - 1;
+                if (enemyVisuals[last].GameObject != null) Destroy(enemyVisuals[last].GameObject);
+                enemyVisuals.RemoveAt(last);
+            }
+        }
+
+        private static void ConfigureEnemyVisual(EnemyVisualProxy proxy, bool isSmall)
+        {
+            if (proxy.GameObject == null) return;
+            bool alreadyConfigured = proxy.IsSmall == isSmall && proxy.GameObject.transform.localScale != Vector3.one;
+            if (alreadyConfigured) return;
+
+            proxy.IsSmall = isSmall;
+            proxy.GameObject.name = isSmall ? "Cultista chico remoto" : "Cultista normal remoto";
+            proxy.GameObject.transform.localScale = isSmall
+                ? new Vector3(.72f, .72f, .72f)
+                : new Vector3(1.15f, 1.15f, 1.15f);
+            proxy.GameObject.GetComponent<Renderer>().material.color = isSmall
+                ? new Color(.95f, .25f, .15f)
+                : new Color(.62f, .08f, .09f);
+        }
+
+        private void ClearEnemyVisuals()
+        {
+            foreach (EnemyVisualProxy proxy in enemyVisuals)
+                if (proxy.GameObject != null) Destroy(proxy.GameObject);
+            enemyVisuals.Clear();
+            RemoteNormalEnemyCount = 0;
+            RemoteSmallEnemyCount = 0;
+        }
+
+        private void UnregisterEnemySnapshotHandler()
+        {
+            if (!enemyHandlerRegistered || manager == null || manager.CustomMessagingManager == null) return;
+            manager.CustomMessagingManager.UnregisterNamedMessageHandler(EnemySnapshotMessage);
+            enemyHandlerRegistered = false;
+        }
+
+        private void SpawnHostPlayer()
+        {
+            if (!manager.IsServer || hostPlayerPrefab == null) return;
+            Vector3 position = session != null ? session.GetNetworkPlayerSpawnPosition(false) : Vector3.up;
+            GameObject instance = Instantiate(hostPlayerPrefab, position, Quaternion.identity);
+            instance.GetComponent<NetworkObject>().SpawnAsPlayerObject(NetworkManager.ServerClientId, true);
+        }
+
+        private void SpawnClientAlly(ulong clientId)
+        {
+            if (remoteAlly != null && remoteAlly.IsSpawned) return;
+            Vector3 position = session != null ? session.GetNetworkPlayerSpawnPosition(true) : Vector3.right + Vector3.up;
+            GameObject instance = Instantiate(clientAllyPrefab, position, Quaternion.identity);
+            remoteAlly = instance.GetComponent<NetworkObject>();
+            remoteAlly.SpawnAsPlayerObject(clientId, true);
+        }
+
+        private void OnTransportFailure()
+        {
+            Status = $"Error de transporte en puerto {activePort}";
+        }
+
+        private void OnApplicationQuit() => SafeShutdown();
+
+        private void OnDestroy()
+        {
+            if (manager != null)
+            {
+                manager.OnClientConnectedCallback -= OnClientConnected;
+                manager.OnClientDisconnectCallback -= OnClientDisconnected;
+                manager.OnTransportFailure -= OnTransportFailure;
+                SafeShutdown();
+            }
+            if (Instance == this) Instance = null;
+        }
+    }
+}

@@ -17,6 +17,7 @@ namespace SchoolEscape.UI
         [SerializeField] private Text statusText;
         [SerializeField] private Text allyText;
         private Button boundBandageButton;
+        private Button boundFlashButton;
 
         public Vector2 MovementCenterScreen
         {
@@ -56,18 +57,19 @@ namespace SchoolEscape.UI
             bandageButton = bandage;
             statusText = status;
             allyText = ally;
-            BindBandageButton();
+            BindButtons();
         }
 
         private void Awake()
         {
             if (session == null) session = FindFirstObjectByType<SchoolEscapePrototype>();
-            BindBandageButton();
+            BindButtons();
         }
 
         private void OnDestroy()
         {
             if (boundBandageButton != null) boundBandageButton.onClick.RemoveListener(UseBandage);
+            if (boundFlashButton != null) boundFlashButton.onClick.RemoveListener(UseFlash);
         }
 
         private void Update()
@@ -75,16 +77,14 @@ namespace SchoolEscape.UI
             if (session == null) session = FindFirstObjectByType<SchoolEscapePrototype>();
             if (session == null) return;
 
-            if (IsInteractHeld())
-                session.Player?.PulseInteract();
+            session.SetLocalInteractHeld(IsInteractHeld());
 
             if (statusText != null)
             {
-                int health = session.Player != null ? session.Player.Health : 0;
-                string interactionHint = session.Player != null ? $"\n{session.Player.InteractionStatus}" : "";
-                statusText.text = $"Vida {health}/3   Pilas {session.Batteries}/3   Venda {(session.Bandages > 0 ? "Sí" : "No")}\n" +
-                                  $"Salida {session.ExitStatusText}   Peligro x{session.DangerMultiplier:0.0}" +
-                                  interactionHint;
+                statusText.text = $"{session.DisplayRoomProgressText}   Vida {session.DisplayHealth}/3   Pilas {session.DisplayBatteries}/3   Venda {(session.DisplayBandages > 0 ? "Sí" : "No")}\n" +
+                                  $"Salida {session.DisplayExitStatusText}   Peligro x{session.DisplayDangerMultiplier:0.0}\n" +
+                                  session.EnemyCounterText +
+                                  $"\n{session.DisplayInteractionStatus}";
             }
 
             if (allyText != null && session.Ally != null)
@@ -94,7 +94,7 @@ namespace SchoolEscape.UI
             }
 
             if (bandageButton != null)
-                bandageButton.interactable = true;
+                bandageButton.interactable = session.DisplayBandages > 0 && session.DisplayHealth < 3;
         }
 
         public Rect GetFlashButtonScreenRect()
@@ -108,13 +108,22 @@ namespace SchoolEscape.UI
         }
 
         private void UseBandage() => session?.UseBandage();
+        private void UseFlash() => session?.RequestLocalFlash();
 
-        private void BindBandageButton()
+        private void BindButtons()
         {
-            if (boundBandageButton == bandageButton) return;
-            if (boundBandageButton != null) boundBandageButton.onClick.RemoveListener(UseBandage);
-            boundBandageButton = bandageButton;
-            if (boundBandageButton != null) boundBandageButton.onClick.AddListener(UseBandage);
+            if (boundBandageButton != bandageButton)
+            {
+                if (boundBandageButton != null) boundBandageButton.onClick.RemoveListener(UseBandage);
+                boundBandageButton = bandageButton;
+                if (boundBandageButton != null) boundBandageButton.onClick.AddListener(UseBandage);
+            }
+
+            Button flash = flashButton != null ? flashButton.GetComponent<Button>() : null;
+            if (boundFlashButton == flash) return;
+            if (boundFlashButton != null) boundFlashButton.onClick.RemoveListener(UseFlash);
+            boundFlashButton = flash;
+            if (boundFlashButton != null) boundFlashButton.onClick.AddListener(UseFlash);
         }
 
         private bool IsInteractHeld()
@@ -129,6 +138,7 @@ namespace SchoolEscape.UI
             Vector2 topRight = RectTransformUtility.WorldToScreenPoint(null, corners[2]);
             Rect screenRect = Rect.MinMaxRect(bottomLeft.x, bottomLeft.y, topRight.x, topRight.y);
 
+            if (EnhancedTouchSupport.enabled)
             foreach (Touch touch in Touch.activeTouches)
             {
                 if (touch.phase != UnityEngine.InputSystem.TouchPhase.Ended &&

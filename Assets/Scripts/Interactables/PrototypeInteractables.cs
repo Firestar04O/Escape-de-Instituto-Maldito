@@ -1,4 +1,5 @@
 using UnityEngine;
+using SchoolEscape.Rooms;
 
 public abstract class PrototypeInteractable : MonoBehaviour
 {
@@ -7,7 +8,7 @@ public abstract class PrototypeInteractable : MonoBehaviour
     public virtual bool Available => enabled && gameObject.activeInHierarchy;
     public abstract float Duration { get; }
     public abstract string Prompt { get; }
-    public abstract void Complete(PrototypePlayer player);
+    public abstract void Complete(PrototypeActor actor);
 
     public float DistanceOnFloorFrom(Vector3 worldPosition)
     {
@@ -38,7 +39,7 @@ public class PrototypeLocker : PrototypeInteractable
     public override float Duration => 1.5f;
     public override string Prompt => "Registrando taquilla";
 
-    public override void Complete(PrototypePlayer player)
+    public override void Complete(PrototypeActor actor)
     {
         if (searched) return;
         searched = true;
@@ -52,7 +53,7 @@ public class PrototypeKey : PrototypeInteractable
 {
     public override float Duration => 1.5f;
     public override string Prompt => "Recogiendo llave";
-    public override void Complete(PrototypePlayer player)
+    public override void Complete(PrototypeActor actor)
     {
         Session.CollectKey();
         gameObject.SetActive(false);
@@ -66,7 +67,7 @@ public class PrototypeExitPanel : PrototypeInteractable
     public override float Duration => 1.5f;
     public override string Prompt => "Activando panel eléctrico";
 
-    public override void Complete(PrototypePlayer player)
+    public override void Complete(PrototypeActor actor)
     {
         if (activated) return;
         activated = true;
@@ -80,26 +81,26 @@ public abstract class PrototypeGuaranteedResourceFurniture : PrototypeInteractab
     public override bool Available => base.Available && !searched;
     public override float Duration => 2f;
 
-    public override void Complete(PrototypePlayer player)
+    public override void Complete(PrototypeActor actor)
     {
         if (searched) return;
         searched = true;
-        SpawnGuaranteedResource(player);
+        SpawnGuaranteedResource(actor);
 
         Renderer targetRenderer = GetComponent<Renderer>();
         if (targetRenderer != null)
             targetRenderer.material.color *= .55f;
     }
 
-    protected abstract void SpawnGuaranteedResource(PrototypePlayer player);
+    protected abstract void SpawnGuaranteedResource(PrototypeActor actor);
 }
 
 public class PrototypeBatteryFurniture : PrototypeGuaranteedResourceFurniture
 {
     public override string Prompt => "Abriendo mueble de pilas";
-    protected override void SpawnGuaranteedResource(PrototypePlayer player)
+    protected override void SpawnGuaranteedResource(PrototypeActor actor)
     {
-        Vector3 position = GetDropPosition(player);
+        Vector3 position = GetDropPosition(actor);
         GameObject pickup = SchoolEscapePrototype.CreateBox(
             "Pila garantizada",
             position,
@@ -109,9 +110,9 @@ public class PrototypeBatteryFurniture : PrototypeGuaranteedResourceFurniture
         Session.Register(pickup.AddComponent<PrototypeBatteryWorldPickup>());
     }
 
-    private Vector3 GetDropPosition(PrototypePlayer player)
+    private Vector3 GetDropPosition(PrototypeActor actor)
     {
-        Vector3 direction = player != null ? player.transform.position - transform.position : transform.forward;
+        Vector3 direction = actor != null ? actor.transform.position - transform.position : transform.forward;
         direction.y = 0f;
         if (direction.sqrMagnitude < .01f) direction = transform.forward;
         return transform.position + direction.normalized * .8f + Vector3.up * .3f;
@@ -121,9 +122,9 @@ public class PrototypeBatteryFurniture : PrototypeGuaranteedResourceFurniture
 public class PrototypeBandageFurniture : PrototypeGuaranteedResourceFurniture
 {
     public override string Prompt => "Abriendo botiquín";
-    protected override void SpawnGuaranteedResource(PrototypePlayer player)
+    protected override void SpawnGuaranteedResource(PrototypeActor actor)
     {
-        Vector3 direction = player != null ? player.transform.position - transform.position : transform.forward;
+        Vector3 direction = actor != null ? actor.transform.position - transform.position : transform.forward;
         direction.y = 0f;
         if (direction.sqrMagnitude < .01f) direction = transform.forward;
         Vector3 position = transform.position + direction.normalized * .8f + Vector3.up * .3f;
@@ -142,7 +143,7 @@ public class PrototypeBatteryWorldPickup : PrototypeInteractable
     public override float Duration => .1f;
     public override string Prompt => "Recogiendo pila";
 
-    public override void Complete(PrototypePlayer player)
+    public override void Complete(PrototypeActor actor)
     {
         Session.AddBattery();
         gameObject.SetActive(false);
@@ -154,7 +155,7 @@ public class PrototypeBandageWorldPickup : PrototypeInteractable
     public override float Duration => .1f;
     public override string Prompt => "Recogiendo venda";
 
-    public override void Complete(PrototypePlayer player)
+    public override void Complete(PrototypeActor actor)
     {
         Session.AddBandage();
         gameObject.SetActive(false);
@@ -170,23 +171,31 @@ public class PrototypeDoor : PrototypeInteractable
 
     private void Update()
     {
-        if (completed || Session == null || !Session.HasKey || Session.Player == null) return;
+        if (completed || Session == null || !Session.HasKey) return;
 
         Renderer targetRenderer = GetComponent<Renderer>();
-        Vector3 closest = targetRenderer != null
-            ? targetRenderer.bounds.ClosestPoint(Session.Player.transform.position)
-            : transform.position;
-        closest.y = Session.Player.transform.position.y;
-        if (Vector3.Distance(closest, Session.Player.transform.position) <= 2.2f)
+        if (IsActiveActorNear(Session.Player, targetRenderer))
             Complete(Session.Player);
+        else if (IsActiveActorNear(Session.Ally, targetRenderer))
+            Complete(Session.Ally);
     }
 
-    public override void Complete(PrototypePlayer player)
+    private bool IsActiveActorNear(PrototypeActor actor, Renderer targetRenderer)
+    {
+        if (actor == null || actor.IsCaptive || actor.IsDown || actor.Dragger != null) return false;
+        Vector3 closest = targetRenderer != null
+            ? targetRenderer.bounds.ClosestPoint(actor.transform.position)
+            : transform.position;
+        closest.y = actor.transform.position.y;
+        return Vector3.Distance(closest, actor.transform.position) <= 2.2f;
+    }
+
+    public override void Complete(PrototypeActor actor)
     {
         if (completed || !Session.HasKey) return;
         completed = true;
         GetComponent<SchoolEscape.Rooms.RoomExitGate>()?.Unlock();
-        Session.Win();
+        Session.CompleteCurrentRoom();
     }
 }
 
@@ -202,6 +211,21 @@ public class PrototypeRescue : PrototypeInteractable
     }
     public override float Duration => 2.5f;
     public override string Prompt => "Rescatando compañero";
-    public override void Complete(PrototypePlayer player) => GetComponent<PrototypeAlly>().Rescue();
+    public override void Complete(PrototypeActor actor) => GetComponent<PrototypeAlly>().Rescue();
+}
+
+public class PrototypeRescueEntrance : PrototypeInteractable
+{
+    public RescueEntranceAnchor Anchor { get; private set; }
+    public override bool Available => base.Available && Session != null && Session.CanUseRescueEntrance(this);
+    public override float Duration => 1.5f;
+    public override string Prompt => "Preparando entrada de rescate";
+
+    public void Configure(RescueEntranceAnchor anchor) => Anchor = anchor;
+
+    public override void Complete(PrototypeActor actor)
+    {
+        Session.BeginRescueEntranceOpening(this);
+    }
 }
 
