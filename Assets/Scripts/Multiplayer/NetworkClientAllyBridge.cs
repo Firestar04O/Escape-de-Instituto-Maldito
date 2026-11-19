@@ -11,7 +11,7 @@ namespace SchoolEscape.Multiplayer
     public sealed class NetworkClientAllyBridge : NetworkBehaviour
     {
         private const float Speed = 5.8f;
-        private const float SendInterval = 1f / 20f;
+        private const float SendInterval = 1f / 30f;
         private const float FlashAimThreshold = 48f;
         private const float FlashCancelRadius = 32f;
 
@@ -21,11 +21,23 @@ namespace SchoolEscape.Multiplayer
         private readonly NetworkVariable<int> syncedBatteries = new NetworkVariable<int>();
         private readonly NetworkVariable<int> syncedBandages = new NetworkVariable<int>();
         private readonly NetworkVariable<float> syncedDanger = new NetworkVariable<float>(1f);
+        private readonly NetworkVariable<float> syncedRunTime = new NetworkVariable<float>();
         private readonly NetworkVariable<bool> syncedVictory = new NetworkVariable<bool>();
         private readonly NetworkVariable<bool> syncedDefeat = new NetworkVariable<bool>();
+        private readonly NetworkVariable<int> syncedMatchResult = new NetworkVariable<int>();
+        private readonly NetworkVariable<bool> syncedCaptive = new NetworkVariable<bool>();
+        private readonly NetworkVariable<bool> syncedEscaped = new NetworkVariable<bool>();
+        private readonly NetworkVariable<bool> syncedVisible = new NetworkVariable<bool>(true);
+        private readonly NetworkVariable<int> syncedRoomIndex = new NetworkVariable<int>(-1);
+        private readonly NetworkVariable<bool> syncedRescueActive = new NetworkVariable<bool>();
+        private readonly NetworkVariable<bool> syncedRescueOpen = new NetworkVariable<bool>();
         private readonly NetworkVariable<FixedString64Bytes> syncedRoom = new NetworkVariable<FixedString64Bytes>();
         private readonly NetworkVariable<FixedString64Bytes> syncedExit = new NetworkVariable<FixedString64Bytes>();
-        private readonly NetworkVariable<FixedString128Bytes> syncedInteraction = new NetworkVariable<FixedString128Bytes>();
+        private readonly NetworkVariable<FixedString128Bytes> syncedAnnouncement = new NetworkVariable<FixedString128Bytes>();
+        private readonly NetworkVariable<FixedString128Bytes> syncedPersonalAnnouncement = new NetworkVariable<FixedString128Bytes>(
+            default, NetworkVariableReadPermission.Owner, NetworkVariableWritePermission.Server);
+        private readonly NetworkVariable<FixedString128Bytes> syncedInteraction = new NetworkVariable<FixedString128Bytes>(
+            default, NetworkVariableReadPermission.Owner, NetworkVariableWritePermission.Server);
 
         private PrototypeAlly ally;
         private SchoolEscapePrototype session;
@@ -50,10 +62,16 @@ namespace SchoolEscape.Multiplayer
         public int DisplayBatteries => syncedBatteries.Value;
         public int DisplayBandages => syncedBandages.Value;
         public float DisplayDanger => syncedDanger.Value;
+        public float DisplayRunTime => syncedRunTime.Value;
         public bool DisplayVictory => syncedVictory.Value;
         public bool DisplayDefeat => syncedDefeat.Value;
+        public bool DisplayCaptive => syncedCaptive.Value;
+        public PrototypeMatchResult DisplayMatchResult => (PrototypeMatchResult)syncedMatchResult.Value;
         public string DisplayRoom => syncedRoom.Value.IsEmpty ? "Sala" : syncedRoom.Value.ToString();
         public string DisplayExit => syncedExit.Value.IsEmpty ? "bloqueada" : syncedExit.Value.ToString();
+        public string DisplayAnnouncement => !syncedPersonalAnnouncement.Value.IsEmpty
+            ? syncedPersonalAnnouncement.Value.ToString()
+            : syncedAnnouncement.Value.IsEmpty ? string.Empty : syncedAnnouncement.Value.ToString();
         public string InteractionStatus => syncedInteraction.Value.IsEmpty ? "Sin objetivo cercano" : syncedInteraction.Value.ToString();
 
         public override void OnNetworkSpawn()
@@ -85,13 +103,32 @@ namespace SchoolEscape.Multiplayer
                 {
                     nextSendTime = Time.unscaledTime + SendInterval;
                     bool keyboardInteract = Keyboard.current != null && Keyboard.current.eKey.isPressed;
-                    SubmitInputRpc(ReadMove(), uiInteractHeld || keyboardInteract);
+                    Vector2 input = ReadMove();
+                    if (ally != null && ally.CanAct && session != null && !session.IsRoomTransitioning)
+                        ally.ApplyNetworkMovement(new Vector3(input.x, 0f, input.y) * Speed);
+                    SubmitInputRpc(input, uiInteractHeld || keyboardInteract);
                 }
+
+                ally?.ApplyReplicatedState(
+                    syncedHealth.Value,
+                    syncedCaptive.Value,
+                    syncedEscaped.Value,
+                    syncedVisible.Value);
+                session?.ApplyNetworkRoomState(
+                    syncedRoomIndex.Value,
+                    syncedRescueActive.Value,
+                    syncedRescueOpen.Value);
             }
 
             if (!IsServer || ally == null || session == null) return;
 
             SyncHudState();
+            if (session.IsRoomTransitioning)
+            {
+                serverInput = Vector2.zero;
+                UpdateServerInteraction(false);
+                return;
+            }
             if (ally.IsDown || ally.IsCaptive || ally.Dragger != null)
             {
                 serverInput = Vector2.zero;
@@ -117,7 +154,7 @@ namespace SchoolEscape.Multiplayer
             if (IsOwner && IsClient) UseFlashRpc(Vector3.zero);
         }
 
-        [Rpc(SendTo.Server, InvokePermission = RpcInvokePermission.Owner)]
+        [Rpc(SendTo.Server, InvokePermission = RpcInvokePermission.Owner, Delivery = RpcDelivery.Unreliable)]
         private void SubmitInputRpc(Vector2 input, bool interactHeld)
         {
             serverInput = Vector2.ClampMagnitude(input, 1f);
@@ -146,6 +183,7 @@ namespace SchoolEscape.Multiplayer
                 interactionProgress = 0f;
                 currentInteraction = null;
                 SetInteractionStatus(pressed ? "Botón detectado, sin objeto cercano" : "Sin objetivo cercano");
+                if (pressed) session.ShowPersonalMessage(ally, "Botón detectado, sin objeto cercano", .2f);
                 return;
             }
 
@@ -165,7 +203,9 @@ namespace SchoolEscape.Multiplayer
 
             interactionProgress += Time.deltaTime;
             float percent = Mathf.Min(100f, interactionProgress / closest.Duration * 100f);
-            SetInteractionStatus($"{closest.Prompt} {percent:0}%");
+            string progressText = $"{closest.Prompt} {percent:0}%";
+            SetInteractionStatus(progressText);
+            session.ShowPersonalMessage(ally, progressText, .2f);
             if (interactionProgress < closest.Duration) return;
 
             closest.Complete(ally);
@@ -179,10 +219,20 @@ namespace SchoolEscape.Multiplayer
             syncedBatteries.Value = session.Batteries;
             syncedBandages.Value = session.Bandages;
             syncedDanger.Value = session.DangerMultiplier;
+            syncedRunTime.Value = session.RunTime;
             syncedVictory.Value = session.Victory;
             syncedDefeat.Value = session.Defeat;
+            syncedMatchResult.Value = (int)session.MatchResult;
+            syncedCaptive.Value = ally != null && ally.IsCaptive;
+            syncedEscaped.Value = ally != null && ally.IsEscaped;
+            syncedVisible.Value = ally != null && ally.PresentationVisible;
+            syncedRoomIndex.Value = session.CurrentRoomIndex;
+            syncedRescueActive.Value = session.HasActiveRescueRoom;
+            syncedRescueOpen.Value = session.IsRescueEntranceOpen;
             SetFixed(syncedRoom, session.RoomProgressText);
             SetFixed(syncedExit, session.ExitStatusText);
+            SetFixed(syncedAnnouncement, session.CurrentAnnouncementText);
+            SetFixed(syncedPersonalAnnouncement, session.CurrentPersonalAnnouncementFor(ally));
         }
 
         private void SetInteractionStatus(string value)
@@ -194,6 +244,12 @@ namespace SchoolEscape.Multiplayer
         private static void SetFixed(NetworkVariable<FixedString64Bytes> target, string value)
         {
             FixedString64Bytes next = new FixedString64Bytes(value);
+            if (!target.Value.Equals(next)) target.Value = next;
+        }
+
+        private static void SetFixed(NetworkVariable<FixedString128Bytes> target, string value)
+        {
+            FixedString128Bytes next = new FixedString128Bytes(value);
             if (!target.Value.Equals(next)) target.Value = next;
         }
 

@@ -10,6 +10,14 @@ using SchoolEscape.UI;
 using SchoolEscape.Multiplayer;
 using Touch = UnityEngine.InputSystem.EnhancedTouch.Touch;
 
+public enum PrototypeMatchResult
+{
+    InProgress,
+    PerfectEscape,
+    PartialEscape,
+    TotalDefeat
+}
+
 public class SchoolEscapePrototype : MonoBehaviour
 {
     public PrototypePlayer Player { get; private set; }
@@ -17,16 +25,21 @@ public class SchoolEscapePrototype : MonoBehaviour
 
     public bool HasKey { get; private set; }
     public bool Victory { get; private set; }
+    public PrototypeMatchResult MatchResult { get; private set; } = PrototypeMatchResult.InProgress;
     public int Batteries => inventory.Batteries;
     public int Bandages => inventory.Bandages;
     public float RunTime { get; private set; }
-    public float DangerMultiplier => 1f + RunTime / 80f + (Ally != null && Ally.IsCaptive ? 1.5f : 0f) + (exitOpening ? 1.25f : 0f);
+    public int CaptiveCount => CountCaptives();
+    public float DangerMultiplier => 1f + RunTime / 80f + CaptiveCount * 1.5f +
+                                     (exitOpening ? 1.25f : 0f) + recentDirectorActivity;
     public bool CanUseBandage => Bandages > 0 && Player != null && !Player.IsCaptive && !Player.IsDown && Player.Dragger == null && Player.Health < 3;
     public bool IsExitOpening => exitOpening;
     public float ExitOpeningRemaining => exitOpening ? Mathf.Max(0f, exitOpeningEndsAt - Time.time) : 0f;
     public string ExitStatusText => HasKey ? "ABIERTA" : exitOpening ? $"ABRIENDO {Mathf.CeilToInt(ExitOpeningRemaining)}s" : "bloqueada";
     public int CurrentRoomNumber => currentRoomIndex >= 0 ? currentRoomIndex + 1 : 1;
+    public int CurrentRoomIndex => currentRoomIndex;
     public int TotalRooms => roomSequence != null && roomSequence.Count > 0 ? roomSequence.Count : 1;
+    public bool IsFinalRoom => roomSequence == null || currentRoomIndex + 1 >= roomSequence.Count;
     public string CurrentRoomId => authoredRoom != null ? authoredRoom.RoomId : "prototipo";
     public string RoomProgressText => $"Sala {CurrentRoomNumber}/{TotalRooms}";
     private NetworkClientAllyBridge ClientBridge => NetworkClientAllyBridge.LocalOwner;
@@ -36,22 +49,30 @@ public class SchoolEscapePrototype : MonoBehaviour
         get
         {
             if (IsNetworkReplica) return ClientBridge != null && ClientBridge.DisplayDefeat;
-            if (Player == null || !Player.IsCaptive) return false;
-
-            bool remotePartnerActive =
-                SchoolEscapeNetworkBootstrap.Instance != null &&
-                SchoolEscapeNetworkBootstrap.Instance.HasRemoteClient &&
-                Ally != null &&
-                !Ally.IsCaptive;
-            return !remotePartnerActive;
+            return MatchResult == PrototypeMatchResult.TotalDefeat;
         }
     }
+    public PrototypeMatchResult DisplayMatchResult => IsNetworkReplica && ClientBridge != null
+        ? ClientBridge.DisplayMatchResult
+        : MatchResult;
+    public string MemorialText => BuildMemorialText();
     public int DisplayHealth => IsNetworkReplica && ClientBridge != null ? ClientBridge.DisplayHealth : Player != null ? Player.Health : 0;
     public int DisplayBatteries => IsNetworkReplica && ClientBridge != null ? ClientBridge.DisplayBatteries : Batteries;
     public int DisplayBandages => IsNetworkReplica && ClientBridge != null ? ClientBridge.DisplayBandages : Bandages;
     public float DisplayDangerMultiplier => IsNetworkReplica && ClientBridge != null ? ClientBridge.DisplayDanger : DangerMultiplier;
+    public float DisplayRunTime => IsNetworkReplica && ClientBridge != null ? ClientBridge.DisplayRunTime : RunTime;
     public string DisplayRoomProgressText => IsNetworkReplica && ClientBridge != null ? ClientBridge.DisplayRoom : RoomProgressText;
     public string DisplayExitStatusText => IsNetworkReplica && ClientBridge != null ? ClientBridge.DisplayExit : ExitStatusText;
+    public string CurrentAnnouncementText => Time.time < messageUntil ? message : string.Empty;
+    public string DisplayAnnouncementText
+    {
+        get
+        {
+            if (IsNetworkReplica && ClientBridge != null) return ClientBridge.DisplayAnnouncement;
+            string personal = CurrentPersonalAnnouncementFor(Player);
+            return string.IsNullOrEmpty(personal) ? CurrentAnnouncementText : personal;
+        }
+    }
     public string DisplayInteractionStatus => IsNetworkReplica && ClientBridge != null
         ? ClientBridge.InteractionStatus
         : Player != null ? Player.InteractionStatus : "Sin objetivo cercano";
@@ -72,8 +93,27 @@ public class SchoolEscapePrototype : MonoBehaviour
         $"Normales {ActiveNormalEnemyCount}/{CurrentNormalCap} ({normalEnemiesSpawnedThisRoom}/{NormalRoomBudget})  ·  " +
         $"Chicos {ActiveSmallEnemyCount}/{CurrentSmallCap} ({smallEnemiesSpawnedThisRoom}/{SmallRoomBudget})";
     public MobileHudController MobileHud { get; private set; }
-    public Transform CameraFollowTarget => networkCameraTarget != null ? networkCameraTarget : Player != null ? Player.transform : null;
+    public Transform CameraFollowTarget
+    {
+        get
+        {
+            PrototypeActor localActor = networkCameraTarget != null
+                ? networkCameraTarget.GetComponent<PrototypeActor>()
+                : Player;
+            bool localUnavailable = localActor == null || localActor.IsCaptive || localActor.IsEscaped ||
+                                    (IsNetworkReplica && localActor == Ally && ClientBridge != null && ClientBridge.DisplayCaptive);
+            if (!localUnavailable) return localActor.transform;
+
+            PrototypeActor spectatorTarget = localActor == Player ? (PrototypeActor)Ally : Player;
+            if (spectatorTarget != null && !spectatorTarget.IsCaptive && !spectatorTarget.IsEscaped)
+                return spectatorTarget.transform;
+            return localActor != null ? localActor.transform : null;
+        }
+    }
     public bool IsNetworkReplica { get; private set; }
+    public bool IsRoomTransitioning => roomTransitionInProgress;
+    public bool HasActiveRescueRoom => activeRescueRoomInstance != null;
+    public bool IsRescueEntranceOpen => rescueEntranceOpen;
 
     private readonly List<PrototypeEnemy> enemies = new List<PrototypeEnemy>();
     private readonly List<PrototypeInteractable> interactables = new List<PrototypeInteractable>();
@@ -93,8 +133,8 @@ public class SchoolEscapePrototype : MonoBehaviour
     private RescuePassageLink rescuePassageLink;
     private bool rescueEntranceOpening;
     private bool rescueEntranceOpen;
-    private bool rescuePending;
-    private int allyCapturedInRoomIndex = -1;
+    private readonly Dictionary<PrototypeActor, int> rescueQueue = new Dictionary<PrototypeActor, int>();
+    private PrototypeActor activeRescueCaptive;
     private int currentRoomIndex = -1;
     private bool roomTransitionInProgress;
     private int requiredExitPanelCount = 1;
@@ -103,8 +143,11 @@ public class SchoolEscapePrototype : MonoBehaviour
     private int smallEnemiesSpawnedThisRoom;
     private float spawnTimer = 10f;
     private float nextDirectorRoleUpdate;
+    private float recentDirectorActivity;
+    private float noSurvivorDefeatAt = -1f;
     private const float ExitOpeningDuration = 30f;
     private const float RescueEntranceOpeningDuration = 5f;
+    private const float NoSurvivorGraceDuration = 4f;
     private const int NormalActiveCap = 10;
     private const int SmallActiveCap = 5;
     private const int FrenzyNormalActiveCap = 15;
@@ -126,6 +169,10 @@ public class SchoolEscapePrototype : MonoBehaviour
     private float nextOrientationChangeTime;
     private string message = "Encuentra la llave y escapa";
     private float messageUntil = 4f;
+    private string playerMessage = string.Empty;
+    private float playerMessageUntil;
+    private string allyMessage = string.Empty;
+    private float allyMessageUntil;
     private GUIStyle titleStyle;
     private GUIStyle bodyStyle;
     private GUIStyle centerStyle;
@@ -199,6 +246,9 @@ public class SchoolEscapePrototype : MonoBehaviour
         if (Victory || Defeat || Player == null) return;
 
         RunTime += Time.deltaTime;
+        recentDirectorActivity = Mathf.MoveTowards(recentDirectorActivity, 0f, Time.deltaTime * .08f);
+        UpdateDefeatCountdown();
+        if (Defeat) return;
         spawnTimer -= Time.deltaTime;
         if (Time.time >= nextDirectorRoleUpdate)
         {
@@ -213,6 +263,76 @@ public class SchoolEscapePrototype : MonoBehaviour
                 ? Mathf.Max(1.15f, 4.25f / DangerMultiplier)
                 : Mathf.Max(3.5f, 10f / DangerMultiplier);
         }
+    }
+
+    private IEnumerable<PrototypeActor> GetParticipatingActors()
+    {
+        if (Player != null) yield return Player;
+        if (Ally != null) yield return Ally;
+    }
+
+    private bool HasRemoteHuman =>
+        SchoolEscapeNetworkBootstrap.Instance != null &&
+        SchoolEscapeNetworkBootstrap.Instance.HasRemoteClient;
+
+    private bool AnyParticipantCanAct()
+    {
+        if (Player != null && Player.CanAct) return true;
+        return Ally != null && Ally.CanAct;
+    }
+
+    private int CountCaptives()
+    {
+        int count = 0;
+        foreach (PrototypeActor actor in GetParticipatingActors())
+            if (actor != null && actor.IsCaptive) count++;
+        return count;
+    }
+
+    private void UpdateDefeatCountdown()
+    {
+        if (MatchResult != PrototypeMatchResult.InProgress) return;
+        if (AnyParticipantCanAct())
+        {
+            noSurvivorDefeatAt = -1f;
+            return;
+        }
+
+        if (noSurvivorDefeatAt < 0f)
+        {
+            noSurvivorDefeatAt = Time.time + NoSurvivorGraceDuration;
+            ShowMessage($"Nadie puede moverse. Derrota en {NoSurvivorGraceDuration:0}s…", NoSurvivorGraceDuration);
+            return;
+        }
+        if (Time.time < noSurvivorDefeatAt) return;
+
+        foreach (PrototypeActor actor in GetParticipatingActors())
+        {
+            if (actor == null || actor.IsCaptive || actor.IsEscaped) continue;
+            actor.Captured(ClosestEnemySpawn(actor.transform.position));
+        }
+        if (IsFinalRoom)
+            EvaluateFinalResult();
+        if (MatchResult == PrototypeMatchResult.InProgress)
+        {
+            MatchResult = PrototypeMatchResult.TotalDefeat;
+            Victory = false;
+            ShowMessage("TODO EL EQUIPO FUE RAPTADO", 999f);
+        }
+    }
+
+    public void AddDirectorActivity(float amount)
+    {
+        recentDirectorActivity = Mathf.Clamp(recentDirectorActivity + Mathf.Max(0f, amount), 0f, 2.5f);
+    }
+
+    private string BuildMemorialText()
+    {
+        string hostState = Player == null ? "ausente" :
+            Player.IsEscaped ? "escapó" : Player.IsCaptive ? "raptado" : "no resolvió su salida";
+        string partnerState = Ally == null ? "ausente" :
+            Ally.IsEscaped ? "escapó" : Ally.IsCaptive ? "raptado" : "no resolvió su salida";
+        return $"Host: {hostState}\nJugador 2: {partnerState}";
     }
 
     private void UpdateLandscapeOrientation()
@@ -375,7 +495,7 @@ public class SchoolEscapePrototype : MonoBehaviour
             Player = CreateCapsule("Jugador", playerPosition, new Color(.18f, .52f, 1f)).AddComponent<PrototypePlayer>();
             Player.Initialize(this);
         }
-        else
+        else if (!Player.IsCaptive && !Player.IsEscaped)
         {
             TeleportActor(Player, playerPosition);
             Player.enabled = true;
@@ -386,10 +506,10 @@ public class SchoolEscapePrototype : MonoBehaviour
             Ally = CreateCapsule("Compañero de prueba", allyPosition, new Color(.25f, .9f, .38f)).AddComponent<PrototypeAlly>();
             Ally.Initialize(this);
         }
-        else if (!Ally.IsCaptive)
+        else if (!Ally.IsCaptive && !Ally.IsEscaped)
         {
             TeleportActor(Ally, allyPosition);
-            Ally.enabled = true;
+            Ally.enabled = Ally.GetComponent<NetworkClientAllyBridge>() == null;
         }
 
         if (ShouldPrepareRescueBranch())
@@ -458,6 +578,67 @@ public class SchoolEscapePrototype : MonoBehaviour
         string roomId = roomIndex < OrderedRoomIds.Length ? OrderedRoomIds[roomIndex] : $"room_{roomIndex + 1}";
         authoredRoom.ConfigureIdentity(roomId, archetype);
         BuildAuthoredRoomPrototype();
+    }
+
+    public void ApplyNetworkRoomState(int roomIndex, bool rescueActive, bool rescueOpen)
+    {
+        if (!IsNetworkReplica || roomSequence == null || roomIndex < 0 || roomIndex >= roomSequence.Count) return;
+        if (roomIndex != currentRoomIndex || activeRoomInstance == null)
+            LoadReplicaRoom(roomIndex);
+
+        if (rescueActive && activeRescueRoomInstance == null)
+            PrepareReplicaRescueBranch();
+        if (rescueActive && rescueOpen)
+        {
+            activeRescueEntrance?.Gate?.Unlock();
+            connectedRescueDoor?.Gate?.Unlock();
+            rescuePassageLink?.SetTraversable(true);
+            rescueEntranceOpen = true;
+        }
+    }
+
+    private void LoadReplicaRoom(int roomIndex)
+    {
+        if (activeRescueRoomInstance != null) Destroy(activeRescueRoomInstance);
+        if (activeRoomInstance != null) Destroy(activeRoomInstance);
+        activeRescueRoomInstance = null;
+        activeRescueRoom = null;
+        connectedRescueDoor = null;
+        rescuePassageLink = null;
+        rescueEntranceOpen = false;
+        rescueEntranceOpening = false;
+
+        GameObject roomPrefab = roomSequence.GetRoom(roomIndex);
+        if (roomPrefab == null) return;
+        currentRoomIndex = roomIndex;
+        activeRoomInstance = Instantiate(roomPrefab, Vector3.zero, Quaternion.identity);
+        activeRoomInstance.name = roomPrefab.name + " (réplica)";
+        authoredRoom = activeRoomInstance.GetComponent<SchoolRoomDefinition>();
+        if (authoredRoom == null) authoredRoom = activeRoomInstance.GetComponentInChildren<SchoolRoomDefinition>(true);
+        RegisterRescueEntrance();
+        Debug.Log($"[Multiplayer] Réplica cargó {roomPrefab.name} para la sala {roomIndex + 1}.");
+    }
+
+    private void PrepareReplicaRescueBranch()
+    {
+        if (authoredRoom == null || activeRescueEntrance == null || roomSequence == null || roomSequence.RescueRoom == null)
+            return;
+        activeRescueRoomInstance = Instantiate(roomSequence.RescueRoom, Vector3.zero, Quaternion.identity);
+        activeRescueRoomInstance.name = "Mapa_Rescate (réplica)";
+        activeRescueRoom = activeRescueRoomInstance.GetComponent<RescueRoomDefinition>();
+        if (activeRescueRoom == null) return;
+
+        RescueDirection requiredDirection = RescueDirectionUtility.Opposite(activeRescueEntrance.Direction);
+        connectedRescueDoor = activeRescueRoom.GetDoor(requiredDirection);
+        if (connectedRescueDoor == null) return;
+        AlignRescueRoom(activeRescueRoomInstance.transform, connectedRescueDoor.transform, activeRescueEntrance.transform);
+        RefreshNavMeshSurfaces(activeRescueRoomInstance);
+        ConfigureConnectedWallVisibility();
+
+        GameObject linkObject = new GameObject("Enlace NavMesh de rescate (réplica)");
+        linkObject.transform.SetParent(activeRescueRoomInstance.transform, true);
+        rescuePassageLink = linkObject.AddComponent<RescuePassageLink>();
+        rescuePassageLink.Configure(activeRescueEntrance.transform, activeRoomInstance.transform, activeRescueRoomInstance.transform);
     }
 
     private static void TeleportActor(PrototypeActor actor, Vector3 position)
@@ -691,30 +872,43 @@ public class SchoolEscapePrototype : MonoBehaviour
 
     public bool CanUseRescueEntrance(PrototypeRescueEntrance entrance)
     {
-        return entrance != null && entrance == rescueEntranceInteraction && Ally != null && Ally.IsCaptive &&
+        return entrance != null && entrance == rescueEntranceInteraction && activeRescueCaptive != null &&
+               activeRescueCaptive.IsCaptive &&
                activeRescueRoom != null && !rescueEntranceOpening && !rescueEntranceOpen;
     }
 
-    public void NotifyAllyCaptured()
+    public void NotifyActorCaptured(PrototypeActor actor)
     {
-        rescuePending = true;
-        allyCapturedInRoomIndex = currentRoomIndex;
+        if (actor == null) return;
+        if (currentRoomIndex < TotalRooms - 1)
+            rescueQueue[actor] = currentRoomIndex;
         foreach (PrototypeEnemy enemy in enemies)
-            enemy?.ForgetTarget(Ally);
+            enemy?.ForgetTarget(actor);
         AssignDirectorRoles();
-        ShowMessage("Compañero cautivo. La zona de rescate aparecerá desde la siguiente sala.", 4f);
+        AddDirectorActivity(.35f);
+        ShowMessage("Jugador cautivo. La zona de rescate aparecerá desde la siguiente sala.", 4f);
     }
 
-    public void NotifyAllyRescued()
+    public void NotifyActorRescued(PrototypeActor actor)
     {
-        rescuePending = false;
-        allyCapturedInRoomIndex = -1;
-        ShowMessage("Compañero rescatado. Regresa por la misma puerta.", 4f);
+        if (actor == null) return;
+        rescueQueue.Remove(actor);
+        if (activeRescueCaptive == actor) activeRescueCaptive = null;
+        noSurvivorDefeatAt = -1f;
+        AddDirectorActivity(.55f);
+        ShowMessage("Compañero rescatado con 1 corazón. Regresa por la misma puerta.", 4f);
     }
 
     private bool ShouldPrepareRescueBranch()
     {
-        return rescuePending && Ally != null && Ally.IsCaptive && currentRoomIndex > allyCapturedInRoomIndex;
+        activeRescueCaptive = null;
+        foreach (KeyValuePair<PrototypeActor, int> entry in rescueQueue)
+        {
+            if (entry.Key == null || !entry.Key.IsCaptive || currentRoomIndex <= entry.Value) continue;
+            activeRescueCaptive = entry.Key;
+            return true;
+        }
+        return false;
     }
 
     public void BeginRescueEntranceOpening(PrototypeRescueEntrance entrance)
@@ -765,8 +959,8 @@ public class SchoolEscapePrototype : MonoBehaviour
         Transform regularRoomRoot = activeRoomInstance != null ? activeRoomInstance.transform : authoredRoom.transform;
         rescuePassageLink.Configure(activeRescueEntrance.transform, regularRoomRoot, activeRescueRoomInstance.transform);
 
-        if (Ally != null && Ally.IsCaptive && activeRescueRoom.CaptiveSpawn != null)
-            Ally.PlaceCaptiveForRescue(activeRescueRoom.CaptiveSpawn.position + Vector3.up);
+        if (activeRescueCaptive != null && activeRescueCaptive.IsCaptive && activeRescueRoom.CaptiveSpawn != null)
+            activeRescueCaptive.PlaceCaptiveForRescue(activeRescueRoom.CaptiveSpawn.position + Vector3.up);
 
         ShowMessage("Tu compañero está en la zona de rescate. Busca la entrada marcada.", 4f);
     }
@@ -873,13 +1067,17 @@ public class SchoolEscapePrototype : MonoBehaviour
             }
         }
 
-        if (Ally != null && Ally.RescueInteraction != null && Ally.RescueInteraction.Available)
+        foreach (PrototypeActor actor in GetParticipatingActors())
         {
-            Vector3 allyPosition = Ally.transform.position;
-            allyPosition.y = position.y;
-            float distance = Vector3.Distance(position, allyPosition);
+            if (actor == null || actor.RescueInteraction == null || !actor.RescueInteraction.Available) continue;
+            Vector3 actorPosition = actor.transform.position;
+            actorPosition.y = position.y;
+            float distance = Vector3.Distance(position, actorPosition);
             if (distance < bestDistance)
-                return Ally.RescueInteraction;
+            {
+                bestDistance = distance;
+                best = actor.RescueInteraction;
+            }
         }
         return best;
     }
@@ -950,23 +1148,23 @@ public class SchoolEscapePrototype : MonoBehaviour
         UnlockExit();
     }
 
-    public void AddBattery()
+    public void AddBattery(PrototypeActor actor = null)
     {
         inventory.AddBattery();
-        ShowMessage("Pila recogida", 2f);
+        ShowPersonalMessage(actor != null ? actor : Player, "Pila recogida", 2f);
     }
 
-    public void AddBandage()
+    public void AddBandage(PrototypeActor actor = null)
     {
         inventory.AddBandage();
-        ShowMessage("Venda recogida", 2f);
+        ShowPersonalMessage(actor != null ? actor : Player, "Venda recogida", 2f);
     }
 
-    public bool UseBattery()
+    public bool UseBattery(PrototypeActor actor = null)
     {
         if (!inventory.TryUseBattery())
         {
-            ShowMessage("Sin pilas", 2f);
+            ShowPersonalMessage(actor != null ? actor : Player, "Sin pilas", 2f);
             return false;
         }
         return true;
@@ -986,22 +1184,22 @@ public class SchoolEscapePrototype : MonoBehaviour
     {
         if (Bandages <= 0)
         {
-            ShowMessage("No tienes vendas", 2f);
+            ShowPersonalMessage(actor, "No tienes vendas", 2f);
             return false;
         }
         if (actor == null || actor.IsCaptive || actor.IsDown || actor.Dragger != null)
         {
-            ShowMessage("No puedes usar una venda en este estado", 2f);
+            ShowPersonalMessage(actor, "No puedes usar una venda en este estado", 2f);
             return false;
         }
         if (actor.Health >= 3)
         {
-            ShowMessage("Tu vida ya está completa", 2f);
+            ShowPersonalMessage(actor, "Tu vida ya está completa", 2f);
             return false;
         }
         if (!inventory.TryUseBandage()) return false;
         actor.HealFull();
-        ShowMessage("Salud restaurada", 2f);
+        ShowPersonalMessage(actor, "Salud restaurada", 2f);
         return true;
     }
 
@@ -1023,7 +1221,8 @@ public class SchoolEscapePrototype : MonoBehaviour
 
     public bool FireFlashFor(PrototypeActor actor, Vector3 requestedDirection)
     {
-        if (actor == null || actor.IsDown || actor.IsCaptive || actor.Dragger != null || !UseBattery()) return false;
+        if (actor == null || actor.IsDown || actor.IsCaptive || actor.Dragger != null || !UseBattery(actor)) return false;
+        AddDirectorActivity(.16f);
 
         Vector3 direction = requestedDirection;
         if (direction.sqrMagnitude < .01f)
@@ -1047,14 +1246,22 @@ public class SchoolEscapePrototype : MonoBehaviour
         direction.y = 0f;
         if (direction.sqrMagnitude < .01f) direction = Vector3.forward;
         direction.Normalize();
-        foreach (PrototypeEnemy enemy in enemies)
+        int affectedEnemies = 0;
+        foreach (PrototypeEnemy enemy in enemies.ToArray())
         {
             if (enemy == null) continue;
             Vector3 delta = enemy.transform.position - actor.transform.position;
             delta.y = 0f;
             if (delta.magnitude <= 7f && Vector3.Angle(direction, delta) <= 35f)
+            {
                 enemy.HitByFlash();
+                affectedEnemies++;
+            }
         }
+
+        ShowPersonalMessage(actor, affectedEnemies == 1
+            ? "Flash: 1 cultista afectado"
+            : $"Flash: {affectedEnemies} cultistas afectados", 1.5f);
 
         GameObject flash = CreateBox(
             "Destello remoto",
@@ -1069,7 +1276,7 @@ public class SchoolEscapePrototype : MonoBehaviour
 
     public void CompleteCurrentRoom()
     {
-        if (Victory || roomTransitionInProgress) return;
+        if (Victory || Defeat || roomTransitionInProgress) return;
 
         int nextRoomIndex = currentRoomIndex + 1;
         if (roomSequence == null || nextRoomIndex >= roomSequence.Count)
@@ -1081,17 +1288,64 @@ public class SchoolEscapePrototype : MonoBehaviour
         StartCoroutine(TransitionToRoom(nextRoomIndex));
     }
 
+    public void ActorReachedExit(PrototypeActor actor)
+    {
+        if (actor == null || !actor.CanAct || Victory || Defeat || roomTransitionInProgress) return;
+        bool finalRoom = roomSequence == null || currentRoomIndex + 1 >= roomSequence.Count;
+        if (!finalRoom)
+        {
+            CompleteCurrentRoom();
+            return;
+        }
+
+        actor.MarkEscaped();
+        EvaluateFinalResult();
+    }
+
+    private void EvaluateFinalResult()
+    {
+        int participantCount = HasRemoteHuman ? 2 : 1;
+        int escapedCount = 0;
+        int resolvedCount = 0;
+        foreach (PrototypeActor actor in GetParticipatingActors())
+        {
+            if (actor == null || (!HasRemoteHuman && actor == Ally)) continue;
+            if (actor.IsEscaped) escapedCount++;
+            if (actor.IsEscaped || actor.IsCaptive) resolvedCount++;
+        }
+        if (resolvedCount < participantCount) return;
+
+        if (escapedCount <= 0)
+        {
+            MatchResult = PrototypeMatchResult.TotalDefeat;
+            Victory = false;
+        }
+        else
+        {
+            MatchResult = escapedCount == participantCount
+                ? PrototypeMatchResult.PerfectEscape
+                : PrototypeMatchResult.PartialEscape;
+            Victory = true;
+        }
+        ShowMessage(MatchResult == PrototypeMatchResult.PerfectEscape
+            ? "ESCAPE PERFECTO"
+            : MatchResult == PrototypeMatchResult.PartialEscape
+                ? "ESCAPE PARCIAL"
+                : "TODO EL EQUIPO FUE RAPTADO", 999f);
+    }
+
     private IEnumerator TransitionToRoom(int nextRoomIndex)
     {
         roomTransitionInProgress = true;
         ShowMessage($"{RoomProgressText} completada", 2f);
 
-        if (Player != null)
+        foreach (PrototypeActor actor in GetParticipatingActors())
         {
-            if (Player.Dragger != null) Player.ReleaseFromDrag();
-            Player.enabled = false;
+            if (actor == null || actor.IsCaptive || actor.IsEscaped) continue;
+            if (actor.Dragger != null || actor.IsDown)
+                actor.Captured(ClosestEnemySpawn(actor.transform.position));
         }
-        if (Ally != null && Ally.Dragger != null) Ally.ReleaseFromDrag();
+        if (Player != null) Player.enabled = false;
         if (Ally != null) Ally.enabled = false;
 
         foreach (PrototypeEnemy enemy in enemies.ToArray())
@@ -1108,6 +1362,7 @@ public class SchoolEscapePrototype : MonoBehaviour
         rescueEntranceInteraction = null;
         connectedRescueDoor = null;
         rescuePassageLink = null;
+        activeRescueCaptive = null;
         rescueEntranceOpening = false;
         rescueEntranceOpen = false;
 
@@ -1133,13 +1388,15 @@ public class SchoolEscapePrototype : MonoBehaviour
         yield return new WaitForSeconds(.45f);
 
         LoadSequencedRoom(nextRoomIndex);
-        if (Player != null) Player.enabled = true;
-        if (Ally != null && !Ally.IsCaptive) Ally.enabled = true;
+        if (Player != null && !Player.IsCaptive && !Player.IsEscaped) Player.enabled = true;
+        if (Ally != null && !Ally.IsCaptive && !Ally.IsEscaped)
+            Ally.enabled = Ally.GetComponent<NetworkClientAllyBridge>() == null;
         roomTransitionInProgress = false;
     }
 
     public void Win()
     {
+        MatchResult = PrototypeMatchResult.PerfectEscape;
         Victory = true;
         ShowMessage("ESCAPASTE DEL INSTITUTO", 999f);
     }
@@ -1148,6 +1405,28 @@ public class SchoolEscapePrototype : MonoBehaviour
     {
         message = text;
         messageUntil = Time.time + duration;
+    }
+
+    public void ShowPersonalMessage(PrototypeActor actor, string text, float duration)
+    {
+        if (actor == Ally)
+        {
+            allyMessage = text;
+            allyMessageUntil = Time.time + duration;
+            return;
+        }
+        if (actor != Player) return;
+        playerMessage = text;
+        playerMessageUntil = Time.time + duration;
+    }
+
+    public string CurrentPersonalAnnouncementFor(PrototypeActor actor)
+    {
+        if (actor == Ally)
+            return Time.time < allyMessageUntil ? allyMessage : string.Empty;
+        if (actor == Player)
+            return Time.time < playerMessageUntil ? playerMessage : string.Empty;
+        return string.Empty;
     }
 
     public Vector3 GetNetworkPlayerSpawnPosition(bool allySlot)
@@ -1244,6 +1523,7 @@ public class SchoolEscapePrototype : MonoBehaviour
         exitOpening = false;
         exitOpeningEndsAt = 0f;
         Victory = false;
+        MatchResult = PrototypeMatchResult.InProgress;
         roomTransitionInProgress = false;
         currentRoomIndex = -1;
         activeRoomInstance = null;
@@ -1257,8 +1537,10 @@ public class SchoolEscapePrototype : MonoBehaviour
         rescuePassageLink = null;
         rescueEntranceOpening = false;
         rescueEntranceOpen = false;
-        rescuePending = false;
-        allyCapturedInRoomIndex = -1;
+        rescueQueue.Clear();
+        activeRescueCaptive = null;
+        noSurvivorDefeatAt = -1f;
+        recentDirectorActivity = 0f;
         inventory.Reset();
         RunTime = 0f;
         normalEnemiesSpawnedThisRoom = 0;
@@ -1266,6 +1548,10 @@ public class SchoolEscapePrototype : MonoBehaviour
         spawnTimer = 10f;
         message = "Encuentra la llave y escapa";
         messageUntil = Time.time + 4f;
+        playerMessage = string.Empty;
+        playerMessageUntil = 0f;
+        allyMessage = string.Empty;
+        allyMessageUntil = 0f;
         BuildPrototype();
     }
 
@@ -1288,8 +1574,8 @@ public class SchoolEscapePrototype : MonoBehaviour
             GUI.Label(new Rect(32, 166, 520, 30), "Compañero: " + allyState, bodyStyle);
         }
 
-        if (Time.time < messageUntil)
-            GUI.Label(new Rect(w * .25f, 20, w * .5f, 46), message, centerStyle);
+        if (!BasicGameFlowUI.HasAnnouncementPresenter && !string.IsNullOrEmpty(DisplayAnnouncementText))
+            GUI.Label(new Rect(w * .25f, 20, w * .5f, 46), DisplayAnnouncementText, centerStyle);
 
         GUI.Label(new Rect(20, h - 112, 650, 92), "WASD: mover  |  Espacio: flash automático\nFLASH: clic corto = autoapuntar  |  Mantén y arrastra = apuntar, suelta = disparar\nE: interactuar/canalizar  |  B: usar venda  |  R: reiniciar", bodyStyle);
 
@@ -1305,10 +1591,16 @@ public class SchoolEscapePrototype : MonoBehaviour
         GUI.Label(new Rect(30, h - 190, 175, 36), "Joystick táctil", centerStyle);
         GUI.Box(new Rect(65, h - 155, 95, 95), "+");
 
-        if (DisplayVictory || Defeat)
+        if (DisplayMatchResult != PrototypeMatchResult.InProgress)
         {
             GUI.Box(new Rect(w * .22f, h * .34f, w * .56f, 190), "");
-            GUI.Label(new Rect(w * .24f, h * .38f, w * .52f, 70), DisplayVictory ? "ESCAPASTE" : "AMBOS FUERON RAPTADOS", centerStyle);
+            string resultTitle = DisplayMatchResult == PrototypeMatchResult.PerfectEscape
+                ? "ESCAPE PERFECTO"
+                : DisplayMatchResult == PrototypeMatchResult.PartialEscape
+                    ? "ESCAPE PARCIAL"
+                    : "DERROTA TOTAL";
+            GUI.Label(new Rect(w * .24f, h * .36f, w * .52f, 70), resultTitle, centerStyle);
+            GUI.Label(new Rect(w * .30f, h * .44f, w * .40f, 60), MemorialText, bodyStyle);
             if (GUI.Button(new Rect(w * .38f, h * .51f, w * .24f, 52), "REINICIAR")) Restart();
         }
     }

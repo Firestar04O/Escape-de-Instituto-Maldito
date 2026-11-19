@@ -22,7 +22,7 @@ namespace SchoolEscape.Multiplayer
         private const string HostPlayerResource = "Multiplayer/NetworkHostPlayer";
         private const string ClientAllyResource = "Multiplayer/NetworkClientAlly";
         private const string EnemySnapshotMessage = "SchoolEscape.EnemySnapshot";
-        private const float EnemySnapshotInterval = .1f;
+        private const float EnemySnapshotInterval = 1f / 15f;
 
         private SchoolEscapePrototype session;
         private NetworkManager manager;
@@ -43,6 +43,7 @@ namespace SchoolEscape.Multiplayer
 
         private sealed class EnemyVisualProxy
         {
+            public int Id;
             public GameObject GameObject;
             public Vector3 TargetPosition;
             public Quaternion TargetRotation;
@@ -311,12 +312,13 @@ namespace SchoolEscape.Multiplayer
             for (int index = 0; index < activeEnemies.Count; index++)
                 if (activeEnemies[index] != null) count++;
 
-            using FastBufferWriter writer = new FastBufferWriter(16 + count * 32, Allocator.Temp);
+            using FastBufferWriter writer = new FastBufferWriter(16 + count * 40, Allocator.Temp);
             writer.WriteValueSafe(count);
             for (int index = 0; index < activeEnemies.Count; index++)
             {
                 PrototypeEnemy enemy = activeEnemies[index];
                 if (enemy == null) continue;
+                writer.WriteValueSafe(enemy.SnapshotId);
                 Vector3 position = enemy.transform.position;
                 Quaternion rotation = enemy.transform.rotation;
                 writer.WriteValueSafe(position);
@@ -342,48 +344,53 @@ namespace SchoolEscape.Multiplayer
         {
             reader.ReadValueSafe(out int count);
             count = Mathf.Clamp(count, 0, 32);
-            EnsureEnemyVisualCount(count);
             RemoteNormalEnemyCount = 0;
             RemoteSmallEnemyCount = 0;
+            HashSet<int> receivedIds = new HashSet<int>();
 
             for (int index = 0; index < count; index++)
             {
+                reader.ReadValueSafe(out int id);
                 reader.ReadValueSafe(out Vector3 position);
                 reader.ReadValueSafe(out Quaternion rotation);
                 reader.ReadByteSafe(out byte smallValue);
                 bool isSmall = smallValue != 0;
-                EnemyVisualProxy proxy = enemyVisuals[index];
+                receivedIds.Add(id);
+                EnemyVisualProxy proxy = GetOrCreateEnemyVisual(id, position, rotation);
                 proxy.TargetPosition = position;
                 proxy.TargetRotation = rotation;
                 ConfigureEnemyVisual(proxy, isSmall);
                 if (isSmall) RemoteSmallEnemyCount++;
                 else RemoteNormalEnemyCount++;
             }
+            for (int index = enemyVisuals.Count - 1; index >= 0; index--)
+            {
+                if (receivedIds.Contains(enemyVisuals[index].Id)) continue;
+                if (enemyVisuals[index].GameObject != null) Destroy(enemyVisuals[index].GameObject);
+                enemyVisuals.RemoveAt(index);
+            }
         }
 
-        private void EnsureEnemyVisualCount(int count)
+        private EnemyVisualProxy GetOrCreateEnemyVisual(int id, Vector3 position, Quaternion rotation)
         {
-            while (enemyVisuals.Count < count)
-            {
-                GameObject visual = GameObject.CreatePrimitive(PrimitiveType.Capsule);
-                visual.name = "Cultista remoto";
-                Collider collider = visual.GetComponent<Collider>();
-                if (collider != null) Destroy(collider);
-                visual.GetComponent<Renderer>().material = SchoolEscapePrototype.MakeMaterial(new Color(.62f, .08f, .09f));
-                enemyVisuals.Add(new EnemyVisualProxy
-                {
-                    GameObject = visual,
-                    TargetPosition = visual.transform.position,
-                    TargetRotation = visual.transform.rotation
-                });
-            }
+            foreach (EnemyVisualProxy existing in enemyVisuals)
+                if (existing.Id == id) return existing;
 
-            while (enemyVisuals.Count > count)
+            GameObject visual = GameObject.CreatePrimitive(PrimitiveType.Capsule);
+            visual.name = "Cultista remoto";
+            visual.transform.SetPositionAndRotation(position, rotation);
+            Collider collider = visual.GetComponent<Collider>();
+            if (collider != null) Destroy(collider);
+            visual.GetComponent<Renderer>().material = SchoolEscapePrototype.MakeMaterial(new Color(.62f, .08f, .09f));
+            EnemyVisualProxy proxy = new EnemyVisualProxy
             {
-                int last = enemyVisuals.Count - 1;
-                if (enemyVisuals[last].GameObject != null) Destroy(enemyVisuals[last].GameObject);
-                enemyVisuals.RemoveAt(last);
-            }
+                Id = id,
+                GameObject = visual,
+                TargetPosition = position,
+                TargetRotation = rotation
+            };
+            enemyVisuals.Add(proxy);
+            return proxy;
         }
 
         private static void ConfigureEnemyVisual(EnemyVisualProxy proxy, bool isSmall)

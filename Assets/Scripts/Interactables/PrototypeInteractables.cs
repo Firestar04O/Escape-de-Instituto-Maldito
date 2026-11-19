@@ -43,9 +43,10 @@ public class PrototypeLocker : PrototypeInteractable
     {
         if (searched) return;
         searched = true;
+        Session.AddDirectorActivity(.12f);
         GetComponent<Renderer>().material.color = new Color(.09f, .12f, .13f);
-        if (Random.value < .67f) Session.AddBattery();
-        else Session.AddBandage();
+        if (Random.value < .67f) Session.AddBattery(actor);
+        else Session.AddBandage(actor);
     }
 }
 
@@ -71,6 +72,7 @@ public class PrototypeExitPanel : PrototypeInteractable
     {
         if (activated) return;
         activated = true;
+        Session.AddDirectorActivity(.35f);
         Session.ActivateExitPanel(this);
     }
 }
@@ -85,6 +87,7 @@ public abstract class PrototypeGuaranteedResourceFurniture : PrototypeInteractab
     {
         if (searched) return;
         searched = true;
+        Session.AddDirectorActivity(.18f);
         SpawnGuaranteedResource(actor);
 
         Renderer targetRenderer = GetComponent<Renderer>();
@@ -145,7 +148,7 @@ public class PrototypeBatteryWorldPickup : PrototypeInteractable
 
     public override void Complete(PrototypeActor actor)
     {
-        Session.AddBattery();
+        Session.AddBattery(actor);
         gameObject.SetActive(false);
     }
 }
@@ -157,7 +160,7 @@ public class PrototypeBandageWorldPickup : PrototypeInteractable
 
     public override void Complete(PrototypeActor actor)
     {
-        Session.AddBandage();
+        Session.AddBandage(actor);
         gameObject.SetActive(false);
     }
 }
@@ -193,9 +196,9 @@ public class PrototypeDoor : PrototypeInteractable
     public override void Complete(PrototypeActor actor)
     {
         if (completed || !Session.HasKey) return;
-        completed = true;
+        completed = !Session.IsFinalRoom;
         GetComponent<SchoolEscape.Rooms.RoomExitGate>()?.Unlock();
-        Session.CompleteCurrentRoom();
+        Session.ActorReachedExit(actor);
     }
 }
 
@@ -205,13 +208,13 @@ public class PrototypeRescue : PrototypeInteractable
     {
         get
         {
-            PrototypeAlly ally = GetComponent<PrototypeAlly>();
-            return ally != null && (ally.IsDown || ally.IsCaptive);
+            PrototypeActor actor = GetComponent<PrototypeActor>();
+            return actor != null && (actor.IsDown || actor.IsCaptive);
         }
     }
     public override float Duration => 2.5f;
     public override string Prompt => "Rescatando compañero";
-    public override void Complete(PrototypeActor actor) => GetComponent<PrototypeAlly>().Rescue();
+    public override void Complete(PrototypeActor actor) => GetComponent<PrototypeActor>()?.Rescue();
 }
 
 public class PrototypeRescueEntrance : PrototypeInteractable
@@ -225,6 +228,7 @@ public class PrototypeRescueEntrance : PrototypeInteractable
 
     public override void Complete(PrototypeActor actor)
     {
+        Session.AddDirectorActivity(.45f);
         Session.BeginRescueEntranceOpening(this);
     }
 }

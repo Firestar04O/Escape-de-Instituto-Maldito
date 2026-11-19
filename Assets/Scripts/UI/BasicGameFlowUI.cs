@@ -25,7 +25,11 @@ namespace SchoolEscape.UI
         private Text resultBody;
         private Text networkStatus;
         private InputField addressInput;
+        private GameObject announcementPanel;
+        private Text announcementText;
         private bool resultShown;
+
+        public static bool HasAnnouncementPresenter { get; private set; }
 
         public static void EnsureFor(SchoolEscapePrototype gameSession)
         {
@@ -51,22 +55,26 @@ namespace SchoolEscape.UI
         {
             if (networkStatus != null && SchoolEscapeNetworkBootstrap.Instance != null)
                 networkStatus.text = SchoolEscapeNetworkBootstrap.Instance.Status;
+            UpdateAnnouncement();
             if (session == null || resultShown) return;
-            bool victory = session.DisplayVictory;
-            bool defeated = session.Defeat;
-            if (!victory && !defeated) return;
+            PrototypeMatchResult matchResult = session.DisplayMatchResult;
+            if (matchResult == PrototypeMatchResult.InProgress) return;
 
             resultShown = true;
             Time.timeScale = 0f;
-            resultTitle.text = victory ? "ESCAPASTE" : "AMBOS FUERON RAPTADOS";
-            resultBody.text = victory
-                ? $"Tiempo: {session.RunTime:0.0} s\nCompletaste las {session.TotalRooms} salas."
-                : $"Llegaste a {session.RoomProgressText.ToLowerInvariant()}.\nReagrúpate e inténtalo otra vez.";
+            resultTitle.text = matchResult == PrototypeMatchResult.PerfectEscape
+                ? "ESCAPE PERFECTO"
+                : matchResult == PrototypeMatchResult.PartialEscape
+                    ? "ESCAPE PARCIAL"
+                    : "DERROTA TOTAL";
+            resultBody.text =
+                $"Tiempo: {session.DisplayRunTime:0.0} s · {session.DisplayRoomProgressText}\n{session.MemorialText}";
             navigator.Open(resultPanel);
         }
 
         private void OnDestroy()
         {
+            HasAnnouncementPresenter = false;
             if (Time.timeScale == 0f) Time.timeScale = 1f;
         }
 
@@ -83,6 +91,7 @@ namespace SchoolEscape.UI
             gameObject.AddComponent<GraphicRaycaster>();
 
             navigator = gameObject.AddComponent<PanelNavigator>();
+            BuildAnnouncement();
             mainPanel = CreatePanel("Menú principal");
             helpPanel = CreatePanel("Cómo jugar");
             multiplayerPanel = CreatePanel("Multijugador");
@@ -93,6 +102,46 @@ namespace SchoolEscape.UI
             BuildMultiplayerPanel();
             BuildResultPanel();
             navigator.Configure(mainPanel, new List<GameObject> { mainPanel, helpPanel, multiplayerPanel, resultPanel });
+        }
+
+        private void BuildAnnouncement()
+        {
+            announcementPanel = new GameObject("Anuncio sincronizado", typeof(RectTransform), typeof(UnityEngine.UI.Image));
+            announcementPanel.transform.SetParent(transform, false);
+            RectTransform panelRect = announcementPanel.GetComponent<RectTransform>();
+            panelRect.anchorMin = panelRect.anchorMax = new Vector2(.5f, 1f);
+            panelRect.pivot = new Vector2(.5f, 1f);
+            panelRect.anchoredPosition = new Vector2(0f, -24f);
+            panelRect.sizeDelta = new Vector2(980f, 72f);
+            UnityEngine.UI.Image background = announcementPanel.GetComponent<UnityEngine.UI.Image>();
+            background.color = new Color(.025f, .035f, .055f, .9f);
+            background.raycastTarget = false;
+
+            GameObject textObject = new GameObject("Texto", typeof(RectTransform), typeof(UnityEngine.UI.Text));
+            textObject.transform.SetParent(announcementPanel.transform, false);
+            RectTransform textRect = textObject.GetComponent<RectTransform>();
+            textRect.anchorMin = Vector2.zero;
+            textRect.anchorMax = Vector2.one;
+            textRect.offsetMin = new Vector2(24f, 8f);
+            textRect.offsetMax = new Vector2(-24f, -8f);
+            announcementText = textObject.GetComponent<UnityEngine.UI.Text>();
+            announcementText.font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+            announcementText.fontSize = 28;
+            announcementText.fontStyle = FontStyle.Bold;
+            announcementText.alignment = TextAnchor.MiddleCenter;
+            announcementText.color = Color.white;
+            announcementText.raycastTarget = false;
+            announcementPanel.SetActive(false);
+            HasAnnouncementPresenter = true;
+        }
+
+        private void UpdateAnnouncement()
+        {
+            if (announcementPanel == null || announcementText == null) return;
+            string value = session != null ? session.DisplayAnnouncementText : string.Empty;
+            bool visible = !string.IsNullOrEmpty(value);
+            if (visible && announcementText.text != value) announcementText.text = value;
+            if (announcementPanel.activeSelf != visible) announcementPanel.SetActive(visible);
         }
 
         private void BuildMainPanel()

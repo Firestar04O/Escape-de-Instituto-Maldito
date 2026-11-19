@@ -6,11 +6,13 @@ public enum EnemyRole
     Chaser,
     Ambusher,
     Cutter,
-    Kidnapper
+    Kidnapper,
+    Guard
 }
 
 public class PrototypeEnemy : MonoBehaviour
 {
+    private static int nextSnapshotId = 1;
     private SchoolEscapePrototype session;
     public bool IsSmall;
     private CharacterController controller;
@@ -22,6 +24,7 @@ public class PrototypeEnemy : MonoBehaviour
     private PrototypeActor dragTarget;
     private PrototypeActor priorityTarget;
     public EnemyRole Role { get; private set; } = EnemyRole.Chaser;
+    public int SnapshotId { get; private set; }
 
     public void Initialize(SchoolEscapePrototype gameSession)
     {
@@ -31,13 +34,18 @@ public class PrototypeEnemy : MonoBehaviour
 
     private void Awake()
     {
+        SnapshotId = nextSnapshotId++;
         controller = GetComponent<CharacterController>();
         agent = GetComponent<NavMeshAgent>();
     }
 
     private void Update()
     {
-        if (session == null || session.Victory) return;
+        if (session == null || session.Victory || session.Defeat)
+        {
+            if (HasNavigation) agent.isStopped = true;
+            return;
+        }
         if (Time.time < stunnedUntil)
         {
             if (HasNavigation) agent.isStopped = true;
@@ -230,7 +238,6 @@ public class PrototypeEnemy : MonoBehaviour
         {
             stunnedUntil = Time.time + 1.2f;
             if (HasNavigation) agent.isStopped = true;
-            session.ShowMessage("Cultista aturdido 1.2 s", 1.2f);
         }
     }
 

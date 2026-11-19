@@ -223,28 +223,11 @@ public class PrototypePlayer : PrototypeActor
 
     private void FireFlash(Vector3 direction)
     {
-        if (flashCooldown > 0f || !Session.UseBattery()) return;
-        flashCooldown = .25f;
+        if (flashCooldown > 0f) return;
         direction.y = 0f;
         if (direction.sqrMagnitude < .01f) direction = Facing;
         Facing = direction.normalized;
-
-        foreach (PrototypeEnemy enemy in FindObjectsByType<PrototypeEnemy>(FindObjectsSortMode.None))
-        {
-            Vector3 delta = enemy.transform.position - transform.position;
-            delta.y = 0f;
-            if (delta.magnitude <= 7f && Vector3.Angle(direction, delta) <= 35f)
-                enemy.HitByFlash();
-        }
-
-        GameObject flash = GameObject.CreatePrimitive(PrimitiveType.Cube);
-        flash.name = "Destello";
-        flash.transform.position = transform.position + direction * 2.4f + Vector3.up * .15f;
-        flash.transform.rotation = Quaternion.LookRotation(direction);
-        flash.transform.localScale = new Vector3(2.7f, .08f, 4.6f);
-        Destroy(flash.GetComponent<Collider>());
-        flash.GetComponent<Renderer>().material = SchoolEscapePrototype.MakeMaterial(new Color(1f, 1f, .7f));
-        Destroy(flash, .12f);
+        if (Session.FireFlashFor(this, Facing)) flashCooldown = .25f;
     }
 
     private void ShowAimIndicator(Vector3 direction)
@@ -314,7 +297,7 @@ public class PrototypePlayer : PrototypeActor
         interactionProgress += Time.deltaTime;
         float percent = Mathf.Min(100f, interactionProgress / closest.Duration * 100f);
         InteractionStatus = $"{closest.Prompt} {percent:0}%";
-        Session.ShowMessage(InteractionStatus, .15f);
+        Session.ShowPersonalMessage(this, InteractionStatus, .15f);
         if (interactionProgress >= closest.Duration)
         {
             closest.Complete(this);
@@ -325,6 +308,7 @@ public class PrototypePlayer : PrototypeActor
 
     protected override void OnDowned()
     {
+        base.OnDowned();
         Session.ShowMessage("Has caído. Los cultistas intentarán raptarte.", 4f);
     }
 
