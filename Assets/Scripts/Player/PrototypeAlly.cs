@@ -17,9 +17,14 @@ public class PrototypeAlly : PrototypeActor
 
     public void ApplyNetworkMovement(Vector3 velocity)
     {
+        ApplyNetworkMovement(velocity, Time.deltaTime);
+    }
+
+    public void ApplyNetworkMovement(Vector3 velocity, float deltaTime)
+    {
         if (velocity.sqrMagnitude > .01f)
-            transform.rotation = Quaternion.Slerp(transform.rotation, Quaternion.LookRotation(velocity.normalized), Time.deltaTime * 14f);
-        Move(velocity);
+            transform.rotation = Quaternion.Slerp(transform.rotation, Quaternion.LookRotation(velocity.normalized), deltaTime * 14f);
+        Move(velocity, deltaTime);
     }
 
     protected override void OnDowned()

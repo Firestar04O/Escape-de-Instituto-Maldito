@@ -177,8 +177,21 @@ public abstract class PrototypeActor : MonoBehaviour
 
     protected void Move(Vector3 velocity)
     {
+        Move(velocity, Time.deltaTime);
+    }
+
+    protected void Move(Vector3 velocity, float deltaTime)
+    {
         if (Controller != null && Controller.enabled)
-            Controller.Move(velocity * Time.deltaTime);
+            Controller.Move(velocity * deltaTime);
+    }
+
+    public void SetNetworkPosition(Vector3 position)
+    {
+        bool controllerWasEnabled = Controller != null && Controller.enabled;
+        if (controllerWasEnabled) Controller.enabled = false;
+        transform.position = position;
+        if (controllerWasEnabled) Controller.enabled = true;
     }
 }
 

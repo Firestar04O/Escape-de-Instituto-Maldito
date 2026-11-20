@@ -98,11 +98,11 @@ public class SchoolEscapePrototype : MonoBehaviour
         get
         {
             PrototypeActor localActor = networkCameraTarget != null
-                ? networkCameraTarget.GetComponent<PrototypeActor>()
+                ? networkCameraTarget.GetComponentInParent<PrototypeActor>()
                 : Player;
             bool localUnavailable = localActor == null || localActor.IsCaptive || localActor.IsEscaped ||
                                     (IsNetworkReplica && localActor == Ally && ClientBridge != null && ClientBridge.DisplayCaptive);
-            if (!localUnavailable) return localActor.transform;
+            if (!localUnavailable) return networkCameraTarget != null ? networkCameraTarget : localActor.transform;
 
             PrototypeActor spectatorTarget = localActor == Player ? (PrototypeActor)Ally : Player;
             if (spectatorTarget != null && !spectatorTarget.IsCaptive && !spectatorTarget.IsEscaped)
@@ -1472,6 +1472,11 @@ public class SchoolEscapePrototype : MonoBehaviour
         Ally.enabled = false;
         if (previous != null && previous != networkAlly) Destroy(previous.gameObject);
         if (localAuthority) networkCameraTarget = Ally.transform;
+    }
+
+    public void SetNetworkCameraTarget(Transform target)
+    {
+        if (target != null) networkCameraTarget = target;
     }
 
     public void RestoreSoloAllyAfterDisconnect()

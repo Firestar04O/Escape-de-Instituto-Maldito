@@ -1,5 +1,6 @@
 using Unity.Collections;
 using Unity.Netcode;
+using Unity.Netcode.Components;
 using UnityEngine;
 using UnityEngine.InputSystem;
 using UnityEngine.InputSystem.EnhancedTouch;
@@ -11,7 +12,11 @@ namespace SchoolEscape.Multiplayer
     public sealed class NetworkClientAllyBridge : NetworkBehaviour
     {
         private const float Speed = 5.8f;
-        private const float SendInterval = 1f / 30f;
+        private const float TickDelta = 1f / 30f;
+        private const int InputHistorySize = 256;
+        private const int MaximumServerCatchUpTicks = 8;
+        private const float ReconciliationThreshold = .08f;
+        private const float VisualCorrectionSharpness = 14f;
         private const float FlashAimThreshold = 48f;
         private const float FlashCancelRadius = 32f;
 
@@ -38,14 +43,31 @@ namespace SchoolEscape.Multiplayer
             default, NetworkVariableReadPermission.Owner, NetworkVariableWritePermission.Server);
         private readonly NetworkVariable<FixedString128Bytes> syncedInteraction = new NetworkVariable<FixedString128Bytes>(
             default, NetworkVariableReadPermission.Owner, NetworkVariableWritePermission.Server);
+        private readonly NetworkVariable<Vector3> syncedAuthoritativePosition = new NetworkVariable<Vector3>(
+            default, NetworkVariableReadPermission.Owner, NetworkVariableWritePermission.Server);
+        private readonly NetworkVariable<uint> syncedLastProcessedTick = new NetworkVariable<uint>(
+            default, NetworkVariableReadPermission.Owner, NetworkVariableWritePermission.Server);
+
+        private struct PredictedInput
+        {
+            public uint Tick;
+            public Vector2 Move;
+            public Vector3 PredictedPosition;
+            public bool Valid;
+        }
 
         private PrototypeAlly ally;
         private SchoolEscapePrototype session;
         private PrototypeInteractable currentInteraction;
-        private Vector2 serverInput;
+        private readonly PredictedInput[] inputHistory = new PredictedInput[InputHistorySize];
         private float interactionProgress;
-        private float nextSendTime;
         private float nextFlashTime;
+        private uint localInputTick;
+        private uint lastServerProcessedTick;
+        private uint lastReconciledTick;
+        private int correctionCount;
+        private float lastCorrectionDistance;
+        private float maximumCorrectionDistance;
         private int moveFinger = -1;
         private bool uiInteractHeld;
         private bool serverInteractHeld;
@@ -57,6 +79,10 @@ namespace SchoolEscape.Multiplayer
         private Vector2 flashPressPosition;
         private Vector3 flashAimDirection = Vector3.forward;
         private GameObject aimIndicator;
+        private Transform predictedPresentation;
+        private Renderer rootRenderer;
+        private Renderer predictedRenderer;
+        private NetworkTransform networkTransform;
 
         public int DisplayHealth => syncedHealth.Value;
         public int DisplayBatteries => syncedBatteries.Value;
@@ -73,19 +99,42 @@ namespace SchoolEscape.Multiplayer
             ? syncedPersonalAnnouncement.Value.ToString()
             : syncedAnnouncement.Value.IsEmpty ? string.Empty : syncedAnnouncement.Value.ToString();
         public string InteractionStatus => syncedInteraction.Value.IsEmpty ? "Sin objetivo cercano" : syncedInteraction.Value.ToString();
+        public uint PredictionTick => localInputTick;
+        public uint LastAcknowledgedTick => syncedLastProcessedTick.Value;
+        public int PendingPredictionCount => syncedLastProcessedTick.Value >= localInputTick
+            ? 0
+            : localInputTick - syncedLastProcessedTick.Value > InputHistorySize
+                ? InputHistorySize
+                : (int)(localInputTick - syncedLastProcessedTick.Value);
+        public int CorrectionCount => correctionCount;
+        public float LastCorrectionDistance => lastCorrectionDistance;
+        public float MaximumCorrectionDistance => maximumCorrectionDistance;
 
         public override void OnNetworkSpawn()
         {
             ally = GetComponent<PrototypeAlly>();
             session = FindFirstObjectByType<SchoolEscapePrototype>();
             ally.enabled = false;
-            if (IsOwner && IsClient) LocalOwner = this;
+            networkTransform = GetComponent<NetworkTransform>();
+            if (IsServer)
+                syncedAuthoritativePosition.Value = transform.position;
+            if (IsOwner && IsClient)
+            {
+                LocalOwner = this;
+                if (!IsServer && networkTransform != null) networkTransform.enabled = false;
+                CreatePredictedPresentation();
+            }
             if (session != null) session.AttachNetworkClientAlly(ally, IsOwner);
+            if (predictedPresentation != null) session?.SetNetworkCameraTarget(predictedPresentation);
+            if (NetworkManager != null)
+                NetworkManager.NetworkTickSystem.Tick += OnNetworkTick;
         }
 
         public override void OnNetworkDespawn()
         {
             if (LocalOwner == this) LocalOwner = null;
+            if (NetworkManager != null)
+                NetworkManager.NetworkTickSystem.Tick -= OnNetworkTick;
             if (aimIndicator != null) Destroy(aimIndicator);
         }
 
@@ -99,16 +148,6 @@ namespace SchoolEscape.Multiplayer
                 if (!aimingFlash && Keyboard.current != null && Keyboard.current.spaceKey.wasPressedThisFrame)
                     RequestFlash();
 
-                if (Time.unscaledTime >= nextSendTime)
-                {
-                    nextSendTime = Time.unscaledTime + SendInterval;
-                    bool keyboardInteract = Keyboard.current != null && Keyboard.current.eKey.isPressed;
-                    Vector2 input = ReadMove();
-                    if (ally != null && ally.CanAct && session != null && !session.IsRoomTransitioning)
-                        ally.ApplyNetworkMovement(new Vector3(input.x, 0f, input.y) * Speed);
-                    SubmitInputRpc(input, uiInteractHeld || keyboardInteract);
-                }
-
                 ally?.ApplyReplicatedState(
                     syncedHealth.Value,
                     syncedCaptive.Value,
@@ -118,6 +157,9 @@ namespace SchoolEscape.Multiplayer
                     syncedRoomIndex.Value,
                     syncedRescueActive.Value,
                     syncedRescueOpen.Value);
+                ApplyPresentationVisibility();
+                ReconcileIfNeeded();
+                SmoothVisualCorrection();
             }
 
             if (!IsServer || ally == null || session == null) return;
@@ -125,21 +167,35 @@ namespace SchoolEscape.Multiplayer
             SyncHudState();
             if (session.IsRoomTransitioning)
             {
-                serverInput = Vector2.zero;
                 UpdateServerInteraction(false);
                 return;
             }
             if (ally.IsDown || ally.IsCaptive || ally.Dragger != null)
             {
-                serverInput = Vector2.zero;
                 UpdateServerInteraction(false);
                 return;
             }
-
-            Vector3 direction = new Vector3(serverInput.x, 0f, serverInput.y);
-            if (direction.sqrMagnitude > 1f) direction.Normalize();
-            ally.ApplyNetworkMovement(direction * Speed);
             UpdateServerInteraction(serverInteractHeld);
+        }
+
+        private void OnNetworkTick()
+        {
+            if (!IsOwner || !IsClient || ally == null) return;
+
+            bool keyboardInteract = Keyboard.current != null && Keyboard.current.eKey.isPressed;
+            Vector2 input = Vector2.ClampMagnitude(ReadMove(), 1f);
+            uint tick = ++localInputTick;
+            SimulateMovement(input);
+
+            int slot = (int)(tick % InputHistorySize);
+            inputHistory[slot] = new PredictedInput
+            {
+                Tick = tick,
+                Move = input,
+                PredictedPosition = ally.transform.position,
+                Valid = true
+            };
+            SubmitInputRpc(tick, input, uiInteractHeld || keyboardInteract);
         }
 
         public void SetInteractHeld(bool held) => uiInteractHeld = held;
@@ -155,10 +211,109 @@ namespace SchoolEscape.Multiplayer
         }
 
         [Rpc(SendTo.Server, InvokePermission = RpcInvokePermission.Owner, Delivery = RpcDelivery.Unreliable)]
-        private void SubmitInputRpc(Vector2 input, bool interactHeld)
+        private void SubmitInputRpc(uint tick, Vector2 input, bool interactHeld)
         {
-            serverInput = Vector2.ClampMagnitude(input, 1f);
             serverInteractHeld = interactHeld;
+            if (tick <= lastServerProcessedTick) return;
+
+            Vector2 clampedInput = Vector2.ClampMagnitude(input, 1f);
+            uint missingTicks = tick - lastServerProcessedTick;
+            int simulatedTicks = missingTicks > MaximumServerCatchUpTicks
+                ? MaximumServerCatchUpTicks
+                : (int)missingTicks;
+            for (int index = 0; index < simulatedTicks; index++)
+            {
+                SimulateMovement(clampedInput);
+            }
+            lastServerProcessedTick = tick;
+
+            syncedAuthoritativePosition.Value = ally.transform.position;
+            syncedLastProcessedTick.Value = lastServerProcessedTick;
+        }
+
+        private void SimulateMovement(Vector2 input)
+        {
+            if (ally == null || session == null || !ally.CanAct || session.IsRoomTransitioning) return;
+            Vector3 direction = new Vector3(input.x, 0f, input.y);
+            if (direction.sqrMagnitude > 1f) direction.Normalize();
+            ally.ApplyNetworkMovement(direction * Speed, TickDelta);
+        }
+
+        private void ReconcileIfNeeded()
+        {
+            uint acknowledgedTick = syncedLastProcessedTick.Value;
+            if (acknowledgedTick == 0 || acknowledgedTick == lastReconciledTick) return;
+            lastReconciledTick = acknowledgedTick;
+
+            int acknowledgedSlot = (int)(acknowledgedTick % InputHistorySize);
+            PredictedInput acknowledged = inputHistory[acknowledgedSlot];
+            if (!acknowledged.Valid || acknowledged.Tick != acknowledgedTick) return;
+
+            float error = Vector3.Distance(acknowledged.PredictedPosition, syncedAuthoritativePosition.Value);
+            lastCorrectionDistance = error;
+            maximumCorrectionDistance = Mathf.Max(maximumCorrectionDistance, error);
+
+            uint oldestStoredTick = localInputTick >= InputHistorySize ? localInputTick - InputHistorySize + 1 : 1;
+            uint newestConfirmedTick = acknowledgedTick < localInputTick ? acknowledgedTick : localInputTick;
+            for (uint tick = oldestStoredTick; tick <= newestConfirmedTick; tick++)
+            {
+                int slot = (int)(tick % InputHistorySize);
+                if (inputHistory[slot].Tick == tick) inputHistory[slot].Valid = false;
+            }
+
+            if (error <= ReconciliationThreshold) return;
+
+            correctionCount++;
+            Vector3 oldVisualPosition = predictedPresentation != null
+                ? predictedPresentation.position
+                : ally.transform.position;
+            ally.SetNetworkPosition(syncedAuthoritativePosition.Value);
+
+            uint firstPendingTick = acknowledgedTick + 1;
+            if (firstPendingTick < oldestStoredTick) firstPendingTick = oldestStoredTick;
+            for (uint tick = firstPendingTick; tick <= localInputTick; tick++)
+            {
+                int slot = (int)(tick % InputHistorySize);
+                PredictedInput pending = inputHistory[slot];
+                if (!pending.Valid || pending.Tick != tick) continue;
+                SimulateMovement(pending.Move);
+                pending.PredictedPosition = ally.transform.position;
+                inputHistory[slot] = pending;
+            }
+
+            if (predictedPresentation != null) predictedPresentation.position = oldVisualPosition;
+        }
+
+        private void CreatePredictedPresentation()
+        {
+            MeshFilter sourceFilter = GetComponent<MeshFilter>();
+            rootRenderer = GetComponent<Renderer>();
+            if (sourceFilter == null || rootRenderer == null) return;
+
+            GameObject presentation = new GameObject("Predicted Presentation");
+            presentation.transform.SetParent(transform, false);
+            MeshFilter targetFilter = presentation.AddComponent<MeshFilter>();
+            targetFilter.sharedMesh = sourceFilter.sharedMesh;
+            MeshRenderer targetRenderer = presentation.AddComponent<MeshRenderer>();
+            targetRenderer.sharedMaterials = rootRenderer.sharedMaterials;
+            targetRenderer.shadowCastingMode = rootRenderer.shadowCastingMode;
+            targetRenderer.receiveShadows = rootRenderer.receiveShadows;
+            predictedPresentation = presentation.transform;
+            predictedRenderer = targetRenderer;
+            rootRenderer.enabled = false;
+        }
+
+        private void ApplyPresentationVisibility()
+        {
+            if (predictedRenderer != null) predictedRenderer.enabled = syncedVisible.Value;
+            if (rootRenderer != null) rootRenderer.enabled = false;
+        }
+
+        private void SmoothVisualCorrection()
+        {
+            if (predictedPresentation == null) return;
+            float blend = 1f - Mathf.Exp(-VisualCorrectionSharpness * Time.unscaledDeltaTime);
+            predictedPresentation.localPosition = Vector3.Lerp(predictedPresentation.localPosition, Vector3.zero, blend);
         }
 
         [Rpc(SendTo.Server, InvokePermission = RpcInvokePermission.Owner)]
