@@ -1,5 +1,5 @@
+using System.Collections;
 using System.Collections.Generic;
-using MenuUIBase.UI;
 using SchoolEscape.Multiplayer;
 using UnityEngine;
 using UnityEngine.EventSystems;
@@ -10,71 +10,83 @@ namespace SchoolEscape.UI
     [DisallowMultipleComponent]
     public sealed class BasicGameFlowUI : MonoBehaviour
     {
-        private static readonly Color Backdrop = new Color(.018f, .025f, .04f, .94f);
-        private static readonly Color Surface = new Color(.07f, .085f, .12f, .98f);
+        private static readonly Color Backdrop = new Color(.018f, .025f, .04f, .96f);
+        private static readonly Color Surface = new Color(.07f, .085f, .12f, .99f);
         private static readonly Color Primary = new Color(.65f, .08f, .1f, 1f);
         private static readonly Color Secondary = new Color(.14f, .2f, .28f, 1f);
+        private static readonly Color Muted = new Color(.72f, .75f, .8f);
 
         private SchoolEscapePrototype session;
-        private PanelNavigator navigator;
-        private GameObject mainPanel;
-        private GameObject helpPanel;
-        private GameObject multiplayerPanel;
-        private GameObject resultPanel;
-        private Text resultTitle;
-        private Text resultBody;
-        private Text networkStatus;
-        private InputField addressInput;
+        private readonly List<GameObject> panels = new List<GameObject>();
+        private GameObject mainPanel, helpPanel, creditsPanel, connectionPanel, lobbyPanel, soloConfirmPanel, resultPanel;
         private GameObject announcementPanel;
-        private Text announcementText;
-        private bool resultShown;
+        private Text announcementText, networkStatus, lobbyCode, lobbyPlayers, lobbyStatus, readyLabel;
+        private Text resultTitle, resultBody, resultStatus;
+        private InputField codeInput, nameInput;
+        private Button readyButton, retryButton, resultExitButton;
+        private string confirmedPlayerName;
+        private bool resultShown, victoryReturnScheduled, previousGameplayActive;
 
         public static bool HasAnnouncementPresenter { get; private set; }
+        public static bool IsMenuVisible { get; private set; }
 
         public static void EnsureFor(SchoolEscapePrototype gameSession)
         {
             BasicGameFlowUI existing = FindFirstObjectByType<BasicGameFlowUI>();
-            if (existing != null)
+            if (existing != null) { existing.session = gameSession; return; }
+            GameObject prefab = Resources.Load<GameObject>("UI/SchoolEscapeGameFlowCanvas");
+            if (prefab != null)
             {
-                existing.session = gameSession;
+                BasicGameFlowUI prefabFlow = Instantiate(prefab).GetComponent<BasicGameFlowUI>();
+                prefabFlow.session = gameSession;
                 return;
             }
-
-            GameObject root = new GameObject("Basic Game Flow UI");
-            BasicGameFlowUI flow = root.AddComponent<BasicGameFlowUI>();
-            flow.session = gameSession;
+            GameObject root = new GameObject("School Escape UI - Canvas editable");
+            root.AddComponent<BasicGameFlowUI>().session = gameSession;
         }
 
         private void Start()
         {
-            BuildUi();
+            if (transform.Find("03 - Lobby") != null) BindPrefabUi();
+            else BuildUi();
+            confirmedPlayerName = SchoolEscapeNetworkBootstrap.LoadSavedPlayerName();
+            nameInput.text = confirmedPlayerName;
             ShowMainMenu();
         }
 
         private void Update()
         {
-            if (networkStatus != null && SchoolEscapeNetworkBootstrap.Instance != null)
-                networkStatus.text = SchoolEscapeNetworkBootstrap.Instance.Status;
+            SchoolEscapeNetworkBootstrap bootstrap = SchoolEscapeNetworkBootstrap.Instance;
+            if (networkStatus != null && bootstrap != null) networkStatus.text = bootstrap.Status;
             UpdateAnnouncement();
-            if (session == null || resultShown) return;
-            PrototypeMatchResult matchResult = session.DisplayMatchResult;
-            if (matchResult == PrototypeMatchResult.InProgress) return;
+            UpdateLobby(bootstrap);
 
-            resultShown = true;
-            Time.timeScale = 0f;
-            resultTitle.text = matchResult == PrototypeMatchResult.PerfectEscape
-                ? "ESCAPE PERFECTO"
-                : matchResult == PrototypeMatchResult.PartialEscape
-                    ? "ESCAPE PARCIAL"
-                    : "DERROTA TOTAL";
-            resultBody.text =
-                $"Tiempo: {session.DisplayRunTime:0.0} s · {session.DisplayRoomProgressText}\n{session.MemorialText}";
-            navigator.Open(resultPanel);
+            if (bootstrap != null && !previousGameplayActive && bootstrap.GameplayActive)
+            {
+                CloseAllPanels();
+                if (session != null && session.MobileHud != null) session.MobileHud.gameObject.SetActive(true);
+                Time.timeScale = 1f;
+            }
+            else if (bootstrap != null && previousGameplayActive && !bootstrap.GameplayActive && bootstrap.IsOnlineSession)
+            {
+                resultShown = false;
+                victoryReturnScheduled = false;
+                OpenPanel(lobbyPanel);
+                Time.timeScale = 0f;
+            }
+            previousGameplayActive = bootstrap != null && bootstrap.GameplayActive;
+
+            if (bootstrap != null && !bootstrap.IsOnlineSession && !bootstrap.IsListening &&
+                (lobbyPanel.activeSelf || resultPanel.activeSelf)) ShowMainMenu();
+            if (session == null || resultShown || bootstrap == null || !bootstrap.GameplayActive) return;
+            PrototypeMatchResult result = session.DisplayMatchResult;
+            if (result != PrototypeMatchResult.InProgress) ShowResult(result, bootstrap);
         }
 
         private void OnDestroy()
         {
             HasAnnouncementPresenter = false;
+            IsMenuVisible = false;
             if (Time.timeScale == 0f) Time.timeScale = 1f;
         }
 
@@ -89,245 +101,320 @@ namespace SchoolEscape.UI
             scaler.referenceResolution = new Vector2(1920f, 1080f);
             scaler.matchWidthOrHeight = .5f;
             gameObject.AddComponent<GraphicRaycaster>();
-
-            navigator = gameObject.AddComponent<PanelNavigator>();
             BuildAnnouncement();
-            mainPanel = CreatePanel("Menú principal");
-            helpPanel = CreatePanel("Cómo jugar");
-            multiplayerPanel = CreatePanel("Multijugador");
-            resultPanel = CreatePanel("Resultado");
-
-            BuildMainPanel();
-            BuildHelpPanel();
-            BuildMultiplayerPanel();
-            BuildResultPanel();
-            navigator.Configure(mainPanel, new List<GameObject> { mainPanel, helpPanel, multiplayerPanel, resultPanel });
-        }
-
-        private void BuildAnnouncement()
-        {
-            announcementPanel = new GameObject("Anuncio sincronizado", typeof(RectTransform), typeof(UnityEngine.UI.Image));
-            announcementPanel.transform.SetParent(transform, false);
-            RectTransform panelRect = announcementPanel.GetComponent<RectTransform>();
-            panelRect.anchorMin = panelRect.anchorMax = new Vector2(.5f, 1f);
-            panelRect.pivot = new Vector2(.5f, 1f);
-            panelRect.anchoredPosition = new Vector2(0f, -24f);
-            panelRect.sizeDelta = new Vector2(980f, 72f);
-            UnityEngine.UI.Image background = announcementPanel.GetComponent<UnityEngine.UI.Image>();
-            background.color = new Color(.025f, .035f, .055f, .9f);
-            background.raycastTarget = false;
-
-            GameObject textObject = new GameObject("Texto", typeof(RectTransform), typeof(UnityEngine.UI.Text));
-            textObject.transform.SetParent(announcementPanel.transform, false);
-            RectTransform textRect = textObject.GetComponent<RectTransform>();
-            textRect.anchorMin = Vector2.zero;
-            textRect.anchorMax = Vector2.one;
-            textRect.offsetMin = new Vector2(24f, 8f);
-            textRect.offsetMax = new Vector2(-24f, -8f);
-            announcementText = textObject.GetComponent<UnityEngine.UI.Text>();
-            announcementText.font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
-            announcementText.fontSize = 28;
-            announcementText.fontStyle = FontStyle.Bold;
-            announcementText.alignment = TextAnchor.MiddleCenter;
-            announcementText.color = Color.white;
-            announcementText.raycastTarget = false;
-            announcementPanel.SetActive(false);
-            HasAnnouncementPresenter = true;
-        }
-
-        private void UpdateAnnouncement()
-        {
-            if (announcementPanel == null || announcementText == null) return;
-            string value = session != null ? session.DisplayAnnouncementText : string.Empty;
-            bool visible = !string.IsNullOrEmpty(value);
-            if (visible && announcementText.text != value) announcementText.text = value;
-            if (announcementPanel.activeSelf != visible) announcementPanel.SetActive(visible);
+            mainPanel = CreatePanel("01 - Menú principal");
+            connectionPanel = CreatePanel("02 - Crear o unirse");
+            lobbyPanel = CreatePanel("03 - Lobby");
+            soloConfirmPanel = CreatePanel("04 - Confirmar solitario");
+            helpPanel = CreatePanel("05 - Cómo jugar");
+            creditsPanel = CreatePanel("06 - Créditos");
+            resultPanel = CreatePanel("07 - Resultado");
+            BuildMainPanel(); BuildConnectionPanel(); BuildLobbyPanel(); BuildSoloConfirmPanel();
+            BuildHelpPanel(); BuildCreditsPanel(); BuildResultPanel();
         }
 
         private void BuildMainPanel()
         {
-            CreateText(mainPanel.transform, "ESCAPE DEL\nINSTITUTO MALDITO", 54, FontStyle.Bold, new Vector2(0f, 190f), new Vector2(850f, 160f));
-            CreateText(mainPanel.transform, "PROTOTIPO MVP", 20, FontStyle.Bold, new Vector2(0f, 100f), new Vector2(500f, 40f), new Color(.72f, .75f, .8f));
-            CreateButton(mainPanel.transform, "JUGAR SOLO", new Vector2(0f, 45f), Primary, StartGame);
-            CreateButton(mainPanel.transform, "MULTIJUGADOR", new Vector2(0f, -35f), Secondary, () => navigator.Open(multiplayerPanel));
-            CreateButton(mainPanel.transform, "CÓMO JUGAR", new Vector2(0f, -115f), Secondary, () => navigator.Open(helpPanel));
-            CreateButton(mainPanel.transform, "SALIR", new Vector2(0f, -195f), Secondary, QuitGame);
+            CreateText(mainPanel.transform, "ESCAPE DEL\nINSTITUTO MALDITO", 54, FontStyle.Bold, new Vector2(0, 215), new Vector2(850, 160));
+            CreateText(mainPanel.transform, "PROTOTIPO MVP", 20, FontStyle.Bold, new Vector2(0, 120), new Vector2(500, 40), Muted);
+            CreateButton(mainPanel.transform, "JUGAR", new Vector2(0, 45), Primary, () => OpenPanel(connectionPanel));
+            CreateButton(mainPanel.transform, "CÓMO JUGAR", new Vector2(0, -35), Secondary, () => OpenPanel(helpPanel));
+            CreateButton(mainPanel.transform, "CRÉDITOS", new Vector2(0, -115), Secondary, () => OpenPanel(creditsPanel));
+            CreateButton(mainPanel.transform, "SALIR", new Vector2(0, -195), Secondary, QuitGame);
+        }
+
+        private void BuildConnectionPanel()
+        {
+            CreateText(connectionPanel.transform, "JUGAR", 46, FontStyle.Bold, new Vector2(0, 225), new Vector2(700, 70));
+            CreateText(connectionPanel.transform, "Crea una sala o escribe el código de un amigo", 23, FontStyle.Normal, new Vector2(0, 165), new Vector2(800, 45), Muted);
+            CreateButton(connectionPanel.transform, "CREAR SALA", new Vector2(0, 85), Primary, CreateRoom);
+            codeInput = CreateInputField(connectionPanel.transform, "", "CÓDIGO DE SALA", new Vector2(0, 5));
+            codeInput.characterLimit = 12;
+            CreateButton(connectionPanel.transform, "UNIRSE", new Vector2(0, -75), Primary, JoinRoom);
+            networkStatus = CreateText(connectionPanel.transform, "Sin conexión", 20, FontStyle.Normal, new Vector2(0, -135), new Vector2(800, 42), new Color(.85f, .85f, .55f));
+            CreateButton(connectionPanel.transform, "VOLVER", new Vector2(0, -210), Secondary, ShowMainMenu);
+        }
+
+        private void BuildLobbyPanel()
+        {
+            CreateText(lobbyPanel.transform, "LOBBY", 44, FontStyle.Bold, new Vector2(0, 250), new Vector2(700, 65));
+            lobbyCode = CreateText(lobbyPanel.transform, "CÓDIGO: —", 25, FontStyle.Bold, new Vector2(-235, 185), new Vector2(430, 50));
+            lobbyCode.gameObject.name = "Lobby - Código";
+            CreateButton(lobbyPanel.transform, "COPIAR", new Vector2(245, 185), Secondary, CopyRoomCode, new Vector2(240, 52));
+            CreateText(lobbyPanel.transform, "PERSONAJE", 18, FontStyle.Bold, new Vector2(0, 100), new Vector2(300, 35), Muted);
+            Text character = CreateText(lobbyPanel.transform, "●", 108, FontStyle.Bold, new Vector2(0, 5), new Vector2(180, 150), new Color(.2f, .65f, 1f));
+            character.gameObject.name = "Vista del personaje (reemplazable)";
+            nameInput = CreateInputField(lobbyPanel.transform, "Jugador", "NOMBRE", new Vector2(255, 105));
+            nameInput.onEndEdit.AddListener(ConfirmPlayerName);
+            lobbyPlayers = CreateText(lobbyPanel.transform, "Host\nEsperando jugador 2…", 23, FontStyle.Normal, new Vector2(-250, -5), new Vector2(390, 150));
+            lobbyPlayers.gameObject.name = "Lobby - Jugadores";
+            lobbyStatus = CreateText(lobbyPanel.transform, "Marca LISTO para comenzar", 22, FontStyle.Normal, new Vector2(0, -105), new Vector2(780, 55), new Color(.9f, .85f, .55f));
+            lobbyStatus.gameObject.name = "Lobby - Estado";
+            readyButton = CreateButton(lobbyPanel.transform, "LISTO", new Vector2(0, -175), Primary, ToggleReady);
+            readyLabel = readyButton.GetComponentInChildren<Text>();
+            CreateButton(lobbyPanel.transform, "ABANDONAR", new Vector2(0, -250), Secondary, LeaveRoom);
+        }
+
+        private void BuildSoloConfirmPanel()
+        {
+            CreateText(soloConfirmPanel.transform, "PARTIDA SOLITARIA", 44, FontStyle.Bold, new Vector2(0, 150), new Vector2(760, 70));
+            CreateText(soloConfirmPanel.transform, "Estás solo en la sala. Si continúas, jugarás con el aliado controlado por la IA.", 25, FontStyle.Normal, new Vector2(0, 35), new Vector2(800, 130));
+            CreateButton(soloConfirmPanel.transform, "JUGAR SOLO", new Vector2(0, -75), Primary, ConfirmSoloStart);
+            CreateButton(soloConfirmPanel.transform, "ESPERAR", new Vector2(0, -155), Secondary, () => OpenPanel(lobbyPanel));
         }
 
         private void BuildHelpPanel()
         {
-            CreateText(helpPanel.transform, "CÓMO JUGAR", 42, FontStyle.Bold, new Vector2(0f, 205f), new Vector2(700f, 70f));
-            CreateText(helpPanel.transform,
-                "Activa todas las palancas de la sala.\nResiste 30 segundos mientras se abre la salida.\nEvita que los cultistas rapten al jugador o a su aliado.\n\nPC: WASD · E interactuar · Espacio flash · B venda\nMóvil: joystick y botones en pantalla.",
-                25, FontStyle.Normal, new Vector2(0f, 20f), new Vector2(850f, 270f));
-            CreateButton(helpPanel.transform, "VOLVER", new Vector2(0f, -205f), Secondary, navigator.Back);
+            CreateText(helpPanel.transform, "CÓMO JUGAR", 42, FontStyle.Bold, new Vector2(0, 205), new Vector2(700, 70));
+            CreateText(helpPanel.transform, "Activa todas las palancas de la sala.\nResiste 30 segundos mientras se abre la salida.\nEvita que los cultistas rapten al jugador o a su aliado.\n\nPC: WASD · E interactuar · Espacio flash · B venda\nMóvil: joystick y botones en pantalla.", 25, FontStyle.Normal, new Vector2(0, 20), new Vector2(850, 270));
+            CreateButton(helpPanel.transform, "VOLVER", new Vector2(0, -205), Secondary, ShowMainMenu);
         }
 
-        private void BuildMultiplayerPanel()
+        private void BuildCreditsPanel()
         {
-            CreateText(multiplayerPanel.transform, "MULTIJUGADOR LOCAL", 42, FontStyle.Bold, new Vector2(0f, 230f), new Vector2(760f, 65f));
-            CreateText(multiplayerPanel.transform, "Máximo 2 jugadores · el jugador 2 sustituye al aliado IA", 22, FontStyle.Normal, new Vector2(0f, 175f), new Vector2(800f, 42f), new Color(.72f, .75f, .8f));
-            CreateButton(multiplayerPanel.transform, "CREAR PARTIDA", new Vector2(0f, 105f), Primary, StartHostGame);
-            addressInput = CreateInputField(multiplayerPanel.transform, "127.0.0.1:7977", new Vector2(0f, 25f));
-            CreateButton(multiplayerPanel.transform, "UNIRSE", new Vector2(0f, -55f), Primary, StartClientGame);
-            networkStatus = CreateText(multiplayerPanel.transform, "Sin conexión", 20, FontStyle.Normal, new Vector2(0f, -115f), new Vector2(760f, 36f), new Color(.85f, .85f, .55f));
-            CreateButton(multiplayerPanel.transform, "VOLVER", new Vector2(0f, -195f), Secondary, navigator.Back);
+            CreateText(creditsPanel.transform, "CRÉDITOS", 44, FontStyle.Bold, new Vector2(0, 205), new Vector2(700, 70));
+            CreateText(creditsPanel.transform, "Ayudante John\nCoronel Oscar\nEspino Ricardo\nGutierrez Ismael", 29, FontStyle.Normal, new Vector2(0, 25), new Vector2(700, 250));
+            CreateButton(creditsPanel.transform, "VOLVER", new Vector2(0, -205), Secondary, ShowMainMenu);
         }
 
         private void BuildResultPanel()
         {
-            resultTitle = CreateText(resultPanel.transform, "RESULTADO", 52, FontStyle.Bold, new Vector2(0f, 180f), new Vector2(780f, 90f));
-            resultBody = CreateText(resultPanel.transform, "", 26, FontStyle.Normal, new Vector2(0f, 65f), new Vector2(780f, 110f));
-            CreateButton(resultPanel.transform, "REINTENTAR", new Vector2(0f, -65f), Primary, RestartGame);
-            CreateButton(resultPanel.transform, "MENÚ", new Vector2(0f, -150f), Secondary, ShowMainMenu);
+            resultTitle = CreateText(resultPanel.transform, "RESULTADO", 52, FontStyle.Bold, new Vector2(0, 190), new Vector2(780, 90));
+            resultTitle.gameObject.name = "Resultado - Título";
+            resultBody = CreateText(resultPanel.transform, "", 26, FontStyle.Normal, new Vector2(0, 55), new Vector2(820, 180));
+            resultBody.gameObject.name = "Resultado - Cuerpo";
+            resultStatus = CreateText(resultPanel.transform, "", 21, FontStyle.Normal, new Vector2(0, -55), new Vector2(800, 55), new Color(.9f, .85f, .55f));
+            resultStatus.gameObject.name = "Resultado - Estado";
+            retryButton = CreateButton(resultPanel.transform, "VOLVER A INTENTAR", new Vector2(0, -130), Primary, RetryGame);
+            resultExitButton = CreateButton(resultPanel.transform, "SALIR AL LOBBY", new Vector2(0, -210), Secondary, ExitResultToLobby);
         }
+
+        private void BuildAnnouncement()
+        {
+            announcementPanel = new GameObject("Anuncio sincronizado", typeof(RectTransform), typeof(Image));
+            announcementPanel.transform.SetParent(transform, false);
+            RectTransform rect = announcementPanel.GetComponent<RectTransform>();
+            rect.anchorMin = rect.anchorMax = new Vector2(.5f, 1); rect.pivot = new Vector2(.5f, 1);
+            rect.anchoredPosition = new Vector2(0, -24); rect.sizeDelta = new Vector2(980, 72);
+            announcementPanel.GetComponent<Image>().color = new Color(.025f, .035f, .055f, .9f);
+            announcementText = CreateRawText(announcementPanel.transform, "Texto", 28, FontStyle.Bold, TextAnchor.MiddleCenter);
+            announcementText.rectTransform.anchorMin = Vector2.zero; announcementText.rectTransform.anchorMax = Vector2.one;
+            announcementText.rectTransform.offsetMin = new Vector2(24, 8); announcementText.rectTransform.offsetMax = new Vector2(-24, -8);
+            announcementPanel.SetActive(false); HasAnnouncementPresenter = true;
+        }
+
+        private void BindPrefabUi()
+        {
+            EnsureEventSystem();
+            mainPanel = transform.Find("01 - Menú principal").gameObject;
+            connectionPanel = transform.Find("02 - Crear o unirse").gameObject;
+            lobbyPanel = transform.Find("03 - Lobby").gameObject;
+            soloConfirmPanel = transform.Find("04 - Confirmar solitario").gameObject;
+            helpPanel = transform.Find("05 - Cómo jugar").gameObject;
+            creditsPanel = transform.Find("06 - Créditos").gameObject;
+            resultPanel = transform.Find("07 - Resultado").gameObject;
+            panels.Clear();
+            panels.AddRange(new[] { mainPanel, connectionPanel, lobbyPanel, soloConfirmPanel, helpPanel, creditsPanel, resultPanel });
+            announcementPanel = transform.Find("Anuncio sincronizado").gameObject;
+            announcementText = announcementPanel.transform.Find("Texto").GetComponent<Text>();
+            HasAnnouncementPresenter = true;
+
+            codeInput = FindComponent<InputField>(connectionPanel, "Campo - CÓDIGO DE SALA");
+            networkStatus = FindComponent<Text>(connectionPanel, "Texto - Sin conexión");
+            nameInput = FindComponent<InputField>(lobbyPanel, "Campo - NOMBRE");
+            lobbyCode = FindComponent<Text>(lobbyPanel, "Lobby - Código");
+            lobbyPlayers = FindComponent<Text>(lobbyPanel, "Lobby - Jugadores");
+            lobbyStatus = FindComponent<Text>(lobbyPanel, "Lobby - Estado");
+            readyButton = FindComponent<Button>(lobbyPanel, "Botón - LISTO");
+            readyLabel = readyButton.GetComponentInChildren<Text>();
+            resultTitle = FindComponent<Text>(resultPanel, "Resultado - Título");
+            resultBody = FindComponent<Text>(resultPanel, "Resultado - Cuerpo");
+            resultStatus = FindComponent<Text>(resultPanel, "Resultado - Estado");
+            retryButton = FindComponent<Button>(resultPanel, "Botón - VOLVER A INTENTAR");
+            resultExitButton = FindComponent<Button>(resultPanel, "Botón - SALIR AL LOBBY");
+
+            WireButton(mainPanel, "Botón - JUGAR", () => OpenPanel(connectionPanel));
+            WireButton(mainPanel, "Botón - CÓMO JUGAR", () => OpenPanel(helpPanel));
+            WireButton(mainPanel, "Botón - CRÉDITOS", () => OpenPanel(creditsPanel));
+            WireButton(mainPanel, "Botón - SALIR", QuitGame);
+            WireButton(connectionPanel, "Botón - CREAR SALA", CreateRoom);
+            WireButton(connectionPanel, "Botón - UNIRSE", JoinRoom);
+            WireButton(connectionPanel, "Botón - VOLVER", ShowMainMenu);
+            WireButton(lobbyPanel, "Botón - COPIAR", CopyRoomCode);
+            WireButton(lobbyPanel, "Botón - LISTO", ToggleReady);
+            WireButton(lobbyPanel, "Botón - ABANDONAR", LeaveRoom);
+            WireButton(soloConfirmPanel, "Botón - JUGAR SOLO", ConfirmSoloStart);
+            WireButton(soloConfirmPanel, "Botón - ESPERAR", () => OpenPanel(lobbyPanel));
+            WireButton(helpPanel, "Botón - VOLVER", ShowMainMenu);
+            WireButton(creditsPanel, "Botón - VOLVER", ShowMainMenu);
+            WireButton(resultPanel, "Botón - VOLVER A INTENTAR", RetryGame);
+            WireButton(resultPanel, "Botón - SALIR AL LOBBY", ExitResultToLobby);
+            nameInput.onEndEdit.RemoveAllListeners();
+            nameInput.onEndEdit.AddListener(ConfirmPlayerName);
+        }
+
+        private static T FindComponent<T>(GameObject root, string objectName) where T : Component
+        {
+            foreach (T component in root.GetComponentsInChildren<T>(true))
+                if (component.gameObject.name == objectName) return component;
+            return null;
+        }
+
+        private static void WireButton(GameObject panel, string objectName, UnityEngine.Events.UnityAction action)
+        {
+            Button button = FindComponent<Button>(panel, objectName);
+            if (button == null) return;
+            button.onClick.RemoveAllListeners();
+            button.onClick.AddListener(action);
+        }
+
+        private void UpdateAnnouncement()
+        {
+            if (announcementPanel == null) return;
+            string value = session != null ? session.DisplayAnnouncementText : string.Empty;
+            bool visible = !string.IsNullOrEmpty(value) && panels.TrueForAll(panel => !panel.activeSelf);
+            announcementText.text = value;
+            if (announcementPanel.activeSelf != visible) announcementPanel.SetActive(visible);
+        }
+
+        private void UpdateLobby(SchoolEscapeNetworkBootstrap bootstrap)
+        {
+            if (bootstrap == null || lobbyPanel == null) return;
+            lobbyCode.text = "CÓDIGO: " + (string.IsNullOrEmpty(bootstrap.SessionCode) ? "—" : bootstrap.SessionCode);
+            lobbyPlayers.text = $"{bootstrap.HostPlayerName}  {(bootstrap.HostReady ? "✓ LISTO" : "· ESPERANDO")}\n" +
+                (bootstrap.HasRemoteClient || !string.IsNullOrEmpty(bootstrap.ClientPlayerName) ? $"{bootstrap.ClientPlayerName}  {(bootstrap.ClientReady ? "✓ LISTO" : "· ESPERANDO")}" : "Esperando jugador 2…");
+            if (bootstrap.CountdownActive)
+            {
+                lobbyStatus.text = $"LA PARTIDA COMIENZA EN {bootstrap.CountdownSeconds}";
+                nameInput.interactable = false; readyLabel.text = "CANCELAR";
+                if (nameInput.isFocused) { nameInput.DeactivateInputField(); nameInput.text = confirmedPlayerName; }
+            }
+            else
+            {
+                lobbyStatus.text = bootstrap.HasRemoteClient ? "Ambos jugadores deben estar listos" : "Si empiezas ahora, jugarás con el aliado IA";
+                nameInput.interactable = true; readyLabel.text = bootstrap.LocalReady ? "NO ESTOY LISTO" : "LISTO";
+            }
+            if (resultPanel.activeSelf && bootstrap.CountdownActive) resultStatus.text = $"Reiniciando en {bootstrap.CountdownSeconds}…";
+        }
+
+        private void ShowResult(PrototypeMatchResult result, SchoolEscapeNetworkBootstrap bootstrap)
+        {
+            resultShown = true; Time.timeScale = 0f;
+            bool victory = result != PrototypeMatchResult.TotalDefeat;
+            resultTitle.text = result == PrototypeMatchResult.PerfectEscape ? "ESCAPE PERFECTO" : result == PrototypeMatchResult.PartialEscape ? "ESCAPE PARCIAL" : "DERROTA TOTAL";
+            resultBody.text = $"Tiempo: {session.DisplayRunTime:0.0} s · {session.DisplayRoomProgressText}\n{session.MemorialText}";
+            retryButton.gameObject.SetActive(!victory); resultExitButton.gameObject.SetActive(!victory);
+            retryButton.interactable = true;
+            resultStatus.text = victory ? "Volviendo al lobby en 6 segundos…" : "Ambos jugadores deben aceptar para reintentar.";
+            OpenPanel(resultPanel);
+            if (victory && !victoryReturnScheduled) { victoryReturnScheduled = true; StartCoroutine(ReturnToLobbyAfterVictory(bootstrap)); }
+        }
+
+        private IEnumerator ReturnToLobbyAfterVictory(SchoolEscapeNetworkBootstrap bootstrap)
+        {
+            yield return new WaitForSecondsRealtime(6f);
+            if (bootstrap != null && bootstrap.IsHost) bootstrap.ReturnAfterVictory();
+        }
+
+        private async void CreateRoom()
+        {
+            SchoolEscapeNetworkBootstrap bootstrap = SchoolEscapeNetworkBootstrap.EnsureFor(session);
+            networkStatus.text = "Creando sala…";
+            if (await bootstrap.CreateOnlineSessionAsync(confirmedPlayerName)) OpenLobby();
+        }
+
+        private async void JoinRoom()
+        {
+            SchoolEscapeNetworkBootstrap bootstrap = SchoolEscapeNetworkBootstrap.EnsureFor(session);
+            networkStatus.text = "Uniéndose…";
+            if (await bootstrap.JoinOnlineSessionAsync(codeInput.text, confirmedPlayerName)) OpenLobby();
+        }
+
+        private void OpenLobby()
+        {
+            SchoolEscapeNetworkBootstrap.Instance?.SetLocalPlayerName(confirmedPlayerName);
+            nameInput.text = confirmedPlayerName; resultShown = false; victoryReturnScheduled = false;
+            Time.timeScale = 0f; OpenPanel(lobbyPanel);
+        }
+
+        private void ToggleReady()
+        {
+            SchoolEscapeNetworkBootstrap bootstrap = SchoolEscapeNetworkBootstrap.Instance;
+            if (bootstrap == null) return;
+            ConfirmPlayerName(nameInput.text);
+            if (bootstrap.IsHost && !bootstrap.HasRemoteClient && !bootstrap.LocalReady) { OpenPanel(soloConfirmPanel); return; }
+            bootstrap.SetLocalReady(!bootstrap.LocalReady);
+        }
+
+        private void ConfirmSoloStart() { OpenPanel(lobbyPanel); SchoolEscapeNetworkBootstrap.Instance?.SetLocalReady(true); }
+
+        private void ConfirmPlayerName(string value)
+        {
+            SchoolEscapeNetworkBootstrap bootstrap = SchoolEscapeNetworkBootstrap.Instance;
+            if (bootstrap != null && bootstrap.CountdownActive) { nameInput.text = confirmedPlayerName; return; }
+            confirmedPlayerName = string.IsNullOrWhiteSpace(value) ? "Jugador" : value.Trim();
+            if (confirmedPlayerName.Length > 18) confirmedPlayerName = confirmedPlayerName.Substring(0, 18);
+            nameInput.text = confirmedPlayerName; bootstrap?.SetLocalPlayerName(confirmedPlayerName);
+        }
+
+        private void RetryGame() { SchoolEscapeNetworkBootstrap.Instance?.SubmitRetryVote(true); retryButton.interactable = false; resultStatus.text = "Esperando la decisión del otro jugador…"; }
+        private void ExitResultToLobby() => SchoolEscapeNetworkBootstrap.Instance?.SubmitRetryVote(false);
+        private void LeaveRoom() { SchoolEscapeNetworkBootstrap.Instance?.LeaveOnlineSession(); ShowMainMenu(); }
+        private void CopyRoomCode() { string code = SchoolEscapeNetworkBootstrap.Instance?.SessionCode; if (!string.IsNullOrEmpty(code)) GUIUtility.systemCopyBuffer = code; }
+        private void ShowMainMenu() { Time.timeScale = 0f; OpenPanel(mainPanel); }
+        private void OpenPanel(GameObject target)
+        {
+            foreach (GameObject panel in panels) panel.SetActive(panel == target);
+            IsMenuVisible = target != null;
+            if (session != null && session.MobileHud != null) session.MobileHud.gameObject.SetActive(target == null);
+        }
+
+        private void CloseAllPanels() => OpenPanel(null);
 
         private GameObject CreatePanel(string panelName)
         {
-            GameObject panel = new GameObject(panelName, typeof(RectTransform), typeof(Image));
-            panel.transform.SetParent(transform, false);
-            RectTransform rect = panel.GetComponent<RectTransform>();
-            rect.anchorMin = Vector2.zero;
-            rect.anchorMax = Vector2.one;
-            rect.offsetMin = Vector2.zero;
-            rect.offsetMax = Vector2.zero;
+            GameObject panel = new GameObject(panelName, typeof(RectTransform), typeof(Image)); panel.transform.SetParent(transform, false);
+            RectTransform rect = panel.GetComponent<RectTransform>(); rect.anchorMin = Vector2.zero; rect.anchorMax = Vector2.one; rect.offsetMin = rect.offsetMax = Vector2.zero;
             panel.GetComponent<Image>().color = Backdrop;
-
-            GameObject card = new GameObject("Tarjeta", typeof(RectTransform), typeof(Image));
-            card.transform.SetParent(panel.transform, false);
-            RectTransform cardRect = card.GetComponent<RectTransform>();
-            cardRect.anchorMin = cardRect.anchorMax = new Vector2(.5f, .5f);
-            cardRect.sizeDelta = new Vector2(980f, 650f);
-            card.GetComponent<Image>().color = Surface;
-            panel.SetActive(false);
-            return panel;
+            GameObject card = new GameObject("Tarjeta editable", typeof(RectTransform), typeof(Image)); card.transform.SetParent(panel.transform, false);
+            RectTransform cardRect = card.GetComponent<RectTransform>(); cardRect.anchorMin = cardRect.anchorMax = new Vector2(.5f, .5f); cardRect.sizeDelta = new Vector2(980, 700);
+            card.GetComponent<Image>().color = Surface; panel.SetActive(false); panels.Add(panel); return panel;
         }
 
         private static Text CreateText(Transform panel, string value, int size, FontStyle style, Vector2 position, Vector2 dimensions, Color? color = null)
         {
-            Transform card = panel.Find("Tarjeta");
-            GameObject textObject = new GameObject("Texto", typeof(RectTransform), typeof(Text));
-            textObject.transform.SetParent(card, false);
-            RectTransform rect = textObject.GetComponent<RectTransform>();
-            rect.anchorMin = rect.anchorMax = new Vector2(.5f, .5f);
-            rect.anchoredPosition = position;
-            rect.sizeDelta = dimensions;
-            Text text = textObject.GetComponent<Text>();
-            text.font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
-            text.text = value;
-            text.fontSize = size;
-            text.fontStyle = style;
-            text.alignment = TextAnchor.MiddleCenter;
-            text.color = color ?? Color.white;
-            text.horizontalOverflow = HorizontalWrapMode.Wrap;
-            text.verticalOverflow = VerticalWrapMode.Overflow;
-            return text;
+            Text text = CreateRawText(panel.Find("Tarjeta editable"), "Texto - " + value.Replace("\n", " "), size, style, TextAnchor.MiddleCenter);
+            RectTransform rect = text.rectTransform; rect.anchorMin = rect.anchorMax = new Vector2(.5f, .5f); rect.anchoredPosition = position; rect.sizeDelta = dimensions;
+            text.text = value; text.color = color ?? Color.white; return text;
         }
 
-        private static void CreateButton(Transform panel, string label, Vector2 position, Color color, UnityEngine.Events.UnityAction action)
+        private static Button CreateButton(Transform panel, string label, Vector2 position, Color color, UnityEngine.Events.UnityAction action, Vector2? size = null)
         {
-            Transform card = panel.Find("Tarjeta");
-            GameObject buttonObject = new GameObject(label, typeof(RectTransform), typeof(Image), typeof(Button));
-            buttonObject.transform.SetParent(card, false);
-            RectTransform rect = buttonObject.GetComponent<RectTransform>();
-            rect.anchorMin = rect.anchorMax = new Vector2(.5f, .5f);
-            rect.anchoredPosition = position;
-            rect.sizeDelta = new Vector2(440f, 66f);
-            buttonObject.GetComponent<Image>().color = color;
-            Button button = buttonObject.GetComponent<Button>();
-            button.onClick.AddListener(action);
-            CreateTextForButton(buttonObject.transform, label);
+            GameObject go = new GameObject("Botón - " + label, typeof(RectTransform), typeof(Image), typeof(Button)); go.transform.SetParent(panel.Find("Tarjeta editable"), false);
+            RectTransform rect = go.GetComponent<RectTransform>(); rect.anchorMin = rect.anchorMax = new Vector2(.5f, .5f); rect.anchoredPosition = position; rect.sizeDelta = size ?? new Vector2(440, 66);
+            go.GetComponent<Image>().color = color; Button button = go.GetComponent<Button>(); button.onClick.AddListener(action);
+            Text text = CreateRawText(go.transform, "Etiqueta", 25, FontStyle.Bold, TextAnchor.MiddleCenter); text.text = label;
+            text.rectTransform.anchorMin = Vector2.zero; text.rectTransform.anchorMax = Vector2.one; text.rectTransform.offsetMin = text.rectTransform.offsetMax = Vector2.zero;
+            return button;
         }
 
-        private static InputField CreateInputField(Transform panel, string value, Vector2 position)
+        private static InputField CreateInputField(Transform panel, string value, string hint, Vector2 position)
         {
-            Transform card = panel.Find("Tarjeta");
-            GameObject fieldObject = new GameObject("Dirección IP", typeof(RectTransform), typeof(Image), typeof(InputField));
-            fieldObject.transform.SetParent(card, false);
-            RectTransform rect = fieldObject.GetComponent<RectTransform>();
-            rect.anchorMin = rect.anchorMax = new Vector2(.5f, .5f);
-            rect.anchoredPosition = position;
-            rect.sizeDelta = new Vector2(440f, 58f);
-            fieldObject.GetComponent<Image>().color = new Color(.04f, .055f, .08f, 1f);
-
-            Text text = CreateTextForInput(fieldObject.transform, "Texto", value, Color.white);
-            Text placeholder = CreateTextForInput(fieldObject.transform, "Placeholder", "IP:puerto del host (127.0.0.1:7977)", new Color(.55f, .58f, .65f));
-            InputField input = fieldObject.GetComponent<InputField>();
-            input.textComponent = text;
-            input.placeholder = placeholder;
-            input.text = value;
-            input.contentType = InputField.ContentType.Standard;
-            return input;
+            GameObject go = new GameObject("Campo - " + hint, typeof(RectTransform), typeof(Image), typeof(InputField)); go.transform.SetParent(panel.Find("Tarjeta editable"), false);
+            RectTransform rect = go.GetComponent<RectTransform>(); rect.anchorMin = rect.anchorMax = new Vector2(.5f, .5f); rect.anchoredPosition = position; rect.sizeDelta = new Vector2(440, 58);
+            go.GetComponent<Image>().color = new Color(.04f, .055f, .08f, 1);
+            Text text = CreateRawText(go.transform, "Texto", 23, FontStyle.Normal, TextAnchor.MiddleLeft);
+            Text placeholder = CreateRawText(go.transform, "Placeholder", 21, FontStyle.Normal, TextAnchor.MiddleLeft);
+            foreach (Text item in new[] { text, placeholder }) { item.rectTransform.anchorMin = Vector2.zero; item.rectTransform.anchorMax = Vector2.one; item.rectTransform.offsetMin = new Vector2(18, 6); item.rectTransform.offsetMax = new Vector2(-18, -6); }
+            placeholder.text = hint; placeholder.color = new Color(.55f, .58f, .65f);
+            InputField input = go.GetComponent<InputField>(); input.textComponent = text; input.placeholder = placeholder; input.text = value; return input;
         }
 
-        private static Text CreateTextForInput(Transform parent, string name, string value, Color color)
+        private static Text CreateRawText(Transform parent, string name, int size, FontStyle style, TextAnchor alignment)
         {
-            GameObject textObject = new GameObject(name, typeof(RectTransform), typeof(Text));
-            textObject.transform.SetParent(parent, false);
-            RectTransform rect = textObject.GetComponent<RectTransform>();
-            rect.anchorMin = Vector2.zero;
-            rect.anchorMax = Vector2.one;
-            rect.offsetMin = new Vector2(18f, 6f);
-            rect.offsetMax = new Vector2(-18f, -6f);
-            Text text = textObject.GetComponent<Text>();
-            text.font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
-            text.text = value;
-            text.fontSize = 23;
-            text.alignment = TextAnchor.MiddleLeft;
-            text.color = color;
-            return text;
-        }
-
-        private static void CreateTextForButton(Transform button, string value)
-        {
-            GameObject textObject = new GameObject("Etiqueta", typeof(RectTransform), typeof(Text));
-            textObject.transform.SetParent(button, false);
-            RectTransform rect = textObject.GetComponent<RectTransform>();
-            rect.anchorMin = Vector2.zero;
-            rect.anchorMax = Vector2.one;
-            rect.offsetMin = rect.offsetMax = Vector2.zero;
-            Text text = textObject.GetComponent<Text>();
-            text.font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
-            text.text = value;
-            text.fontSize = 25;
-            text.fontStyle = FontStyle.Bold;
-            text.alignment = TextAnchor.MiddleCenter;
-            text.color = Color.white;
-        }
-
-        private void StartGame()
-        {
-            Time.timeScale = 1f;
-            mainPanel.SetActive(false);
-            helpPanel.SetActive(false);
-            resultPanel.SetActive(false);
-            navigator.CloseAll();
-        }
-
-        private void StartHostGame()
-        {
-            SchoolEscapeNetworkBootstrap bootstrap = SchoolEscapeNetworkBootstrap.EnsureFor(session);
-            if (!bootstrap.StartHost(addressInput != null ? addressInput.text : "127.0.0.1:7977")) return;
-            StartGame();
-        }
-
-        private void StartClientGame()
-        {
-            SchoolEscapeNetworkBootstrap bootstrap = SchoolEscapeNetworkBootstrap.EnsureFor(session);
-            if (!bootstrap.StartClient(addressInput != null ? addressInput.text : "127.0.0.1:7977")) return;
-            StartGame();
-        }
-
-        private void RestartGame()
-        {
-            Time.timeScale = 1f;
-            session.Restart();
-        }
-
-        private void ShowMainMenu()
-        {
-            Time.timeScale = 0f;
-            navigator.Open(mainPanel);
+            GameObject go = new GameObject(name, typeof(RectTransform), typeof(Text)); go.transform.SetParent(parent, false);
+            Text text = go.GetComponent<Text>(); text.font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf"); text.fontSize = size; text.fontStyle = style;
+            text.alignment = alignment; text.color = Color.white; text.horizontalOverflow = HorizontalWrapMode.Wrap; text.verticalOverflow = VerticalWrapMode.Overflow; return text;
         }
 
         private static void QuitGame()
@@ -342,8 +429,7 @@ namespace SchoolEscape.UI
         private static void EnsureEventSystem()
         {
             if (FindFirstObjectByType<EventSystem>() != null) return;
-            GameObject eventSystem = new GameObject("EventSystem", typeof(EventSystem), typeof(StandaloneInputModule));
-            eventSystem.transform.SetAsFirstSibling();
+            new GameObject("EventSystem", typeof(EventSystem), typeof(StandaloneInputModule)).transform.SetAsFirstSibling();
         }
     }
 }

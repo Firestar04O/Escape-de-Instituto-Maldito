@@ -2,9 +2,14 @@ using System;
 using System.Linq;
 using System.Net.NetworkInformation;
 using System.Collections.Generic;
+using System.Collections;
+using System.Threading.Tasks;
 using Unity.Collections;
 using Unity.Netcode;
 using Unity.Netcode.Transports.UTP;
+using Unity.Services.Authentication;
+using Unity.Services.Core;
+using Unity.Services.Multiplayer;
 using UnityEngine;
 
 namespace SchoolEscape.Multiplayer
@@ -18,10 +23,26 @@ namespace SchoolEscape.Multiplayer
         public string Status { get; private set; } = "Sin conexión";
         public bool IsListening => manager != null && manager.IsListening;
         public bool HasRemoteClient => manager != null && manager.IsServer && remoteClientId.HasValue;
+        public bool IsOnlineSession => onlineSession != null;
+        public bool IsHost => manager != null && manager.IsHost;
+        public bool GameplayActive { get; private set; }
+        public bool CountdownActive => countdownEndsAt > 0f;
+        public int CountdownSeconds => CountdownActive ? Mathf.Max(1, Mathf.CeilToInt(countdownEndsAt - Time.unscaledTime)) : 0;
+        public string SessionCode => onlineSession != null ? onlineSession.Code : string.Empty;
+        public string LocalPlayerName { get; private set; } = "Jugador";
+        public string HostPlayerName { get; private set; } = "Host";
+        public string ClientPlayerName { get; private set; } = string.Empty;
+        public bool HostReady { get; private set; }
+        public bool ClientReady { get; private set; }
+        public bool LocalReady => IsHost ? HostReady : ClientReady;
+        public bool HostRetryVote { get; private set; }
+        public bool ClientRetryVote { get; private set; }
 
         private const string HostPlayerResource = "Multiplayer/NetworkHostPlayer";
         private const string ClientAllyResource = "Multiplayer/NetworkClientAlly";
         private const string EnemySnapshotMessage = "SchoolEscape.EnemySnapshot";
+        private const string LobbyCommandMessage = "SchoolEscape.LobbyCommand";
+        private const string LobbySnapshotMessage = "SchoolEscape.LobbySnapshot";
         private const float EnemySnapshotInterval = 1f / 15f;
         public const float AoiEnterDistance = 18f;
         public const float AoiExitDistance = 22f;
@@ -46,6 +67,14 @@ namespace SchoolEscape.Multiplayer
         private readonly ServerRewindHistory rewindHistory = new ServerRewindHistory();
         private int securityStrikes;
         private double securityWindowStartedAt = -1d;
+        private ISession onlineSession;
+        private IHostSession hostOnlineSession;
+        private bool lobbyHandlersRegistered;
+        private float countdownEndsAt = -1f;
+        private bool countdownStartsMatch = true;
+        private bool matchStartInProgress;
+        private bool leavingOnlineSession;
+        private const string PlayerNameKey = "school_escape_player_name";
 
         public int RemoteEnemyCount => enemyVisuals.Count;
         public int LatestServerEnemyCount { get; private set; }
@@ -149,6 +178,9 @@ namespace SchoolEscape.Multiplayer
             if (manager == null || !manager.IsListening) return;
 
             if (manager.IsServer)
+                UpdateLobbyCountdown();
+
+            if (manager.IsServer)
                 rewindHistory.RecordFrame(session, manager.ServerTime.Tick, manager.ServerTime.Time);
 
             if (manager.IsServer && remoteClientId.HasValue && Time.unscaledTime >= nextEnemySnapshotTime)
@@ -164,6 +196,241 @@ namespace SchoolEscape.Multiplayer
                 if (proxy.GameObject == null) continue;
                 proxy.GameObject.transform.position = Vector3.Lerp(proxy.GameObject.transform.position, proxy.TargetPosition, blend);
                 proxy.GameObject.transform.rotation = Quaternion.Slerp(proxy.GameObject.transform.rotation, proxy.TargetRotation, blend);
+            }
+        }
+
+        public async Task<bool> CreateOnlineSessionAsync(string playerName)
+        {
+            if (!ValidatePrefabs() || startInProgress) return false;
+            startInProgress = true;
+            Status = "Conectando con Unity Gaming Services…";
+            try
+            {
+                await EnsureServicesAsync();
+                SetLocalPlayerName(playerName, false);
+                transport.UseWebSockets = true;
+                SessionOptions options = new SessionOptions
+                {
+                    MaxPlayers = 2,
+                    IsPrivate = true,
+                    Name = "Escape del Instituto Maldito"
+                }.WithRelayNetwork().WithNetworkOptions(new NetworkOptions
+                {
+                    RelayProtocol = RelayProtocol.WSS
+                });
+                hostOnlineSession = await MultiplayerService.Instance.CreateSessionAsync(options);
+                onlineSession = hostOnlineSession;
+                HookOnlineSessionEvents();
+                HostPlayerName = LocalPlayerName;
+                Status = $"Sala creada · código {onlineSession.Code}";
+                RegisterLobbyHandlers();
+                BroadcastLobbySnapshot();
+                return true;
+            }
+            catch (Exception exception)
+            {
+                Status = FriendlyOnlineError("No se pudo crear la sala", exception);
+                Debug.LogException(exception);
+                SafeShutdown();
+                onlineSession = null;
+                hostOnlineSession = null;
+                return false;
+            }
+            finally
+            {
+                startInProgress = false;
+            }
+        }
+
+        public async Task<bool> JoinOnlineSessionAsync(string code, string playerName)
+        {
+            if (!ValidatePrefabs() || startInProgress) return false;
+            if (string.IsNullOrWhiteSpace(code))
+            {
+                Status = "Escribe el código de la sala.";
+                return false;
+            }
+
+            startInProgress = true;
+            Status = "Buscando sala…";
+            try
+            {
+                await EnsureServicesAsync();
+                SetLocalPlayerName(playerName, false);
+                transport.UseWebSockets = true;
+                JoinSessionOptions joinOptions = new JoinSessionOptions().WithNetworkOptions(new NetworkOptions
+                {
+                    RelayProtocol = RelayProtocol.WSS
+                });
+                onlineSession = await MultiplayerService.Instance.JoinSessionByCodeAsync(
+                    code.Trim().ToUpperInvariant(), joinOptions);
+                hostOnlineSession = null;
+                HookOnlineSessionEvents();
+                Status = "Entrando al lobby…";
+                RegisterLobbyHandlers();
+                SendLobbyCommand(0, LocalPlayerName);
+                return true;
+            }
+            catch (Exception exception)
+            {
+                Status = FriendlyOnlineError("No se pudo entrar a la sala", exception);
+                Debug.LogException(exception);
+                SafeShutdown();
+                onlineSession = null;
+                return false;
+            }
+            finally
+            {
+                startInProgress = false;
+            }
+        }
+
+        private static async Task EnsureServicesAsync()
+        {
+            if (UnityServices.State == ServicesInitializationState.Uninitialized)
+                await UnityServices.InitializeAsync();
+            if (!AuthenticationService.Instance.IsSignedIn)
+            {
+                AuthenticationService.Instance.SwitchProfile(BuildAuthenticationProfile());
+                await AuthenticationService.Instance.SignInAnonymouslyAsync();
+            }
+        }
+
+        private static string BuildAuthenticationProfile()
+        {
+            unchecked
+            {
+                uint hash = 2166136261;
+                string source = $"{Application.persistentDataPath}|{GetMultiplayerInstanceName()}";
+                for (int index = 0; index < source.Length; index++)
+                    hash = (hash ^ source[index]) * 16777619;
+                return $"school{hash:x8}";
+            }
+        }
+
+        private static string GetMultiplayerInstanceName()
+        {
+            string[] arguments = Environment.GetCommandLineArgs();
+            for (int index = 0; index < arguments.Length - 1; index++)
+            {
+                if (string.Equals(arguments[index], "-name", StringComparison.OrdinalIgnoreCase))
+                    return arguments[index + 1];
+            }
+
+            return SystemInfo.deviceUniqueIdentifier ?? "schoolescape";
+        }
+
+        private static string FriendlyOnlineError(string prefix, Exception exception)
+        {
+            string detail = exception != null ? exception.Message : "error desconocido";
+            return $"{prefix}: {detail}";
+        }
+
+        private void HookOnlineSessionEvents()
+        {
+            if (onlineSession == null) return;
+            onlineSession.Deleted += OnOnlineSessionEnded;
+            onlineSession.RemovedFromSession += OnOnlineSessionEnded;
+            onlineSession.PlayerHasLeft += OnOnlinePlayerLeft;
+        }
+
+        private void OnOnlineSessionEnded()
+        {
+            if (leavingOnlineSession) return;
+            Status = "La sala se cerró.";
+            onlineSession = null;
+            hostOnlineSession = null;
+            SafeShutdown();
+        }
+
+        private void OnOnlinePlayerLeft(string _)
+        {
+            if (manager != null && manager.IsServer)
+                CancelCountdown("El jugador 2 salió; cuenta regresiva cancelada.");
+        }
+
+        public void SetLocalPlayerName(string value, bool notifyNetwork = true)
+        {
+            if (CountdownActive) return;
+            string cleaned = string.IsNullOrWhiteSpace(value) ? "Jugador" : value.Trim();
+            if (cleaned.Length > 18) cleaned = cleaned.Substring(0, 18);
+            LocalPlayerName = cleaned;
+            PlayerPrefs.SetString(PlayerNameKey, cleaned);
+            PlayerPrefs.Save();
+            if (!notifyNetwork || manager == null || !manager.IsListening) return;
+            if (manager.IsServer)
+            {
+                HostPlayerName = cleaned;
+                BroadcastLobbySnapshot();
+            }
+            else SendLobbyCommand(0, cleaned);
+        }
+
+        public static string LoadSavedPlayerName()
+        {
+            return PlayerPrefs.GetString(PlayerNameKey, "Jugador");
+        }
+
+        public void SetLocalReady(bool ready)
+        {
+            if (GameplayActive || matchStartInProgress) return;
+            if (manager == null || !manager.IsListening) return;
+            if (manager.IsServer)
+            {
+                HostReady = ready;
+                if (!ready) CancelCountdown("El host ya no está listo.");
+                EvaluateLobbyStart();
+                BroadcastLobbySnapshot();
+            }
+            else SendLobbyCommand(1, ready ? "1" : "0");
+        }
+
+        public void SubmitRetryVote(bool retry)
+        {
+            if (manager == null || !manager.IsListening || session == null ||
+                session.DisplayMatchResult == PrototypeMatchResult.InProgress) return;
+            if (!retry)
+            {
+                if (manager.IsServer) ReturnEveryoneToLobby();
+                else SendLobbyCommand(3, string.Empty);
+                return;
+            }
+
+            if (manager.IsServer)
+            {
+                HostRetryVote = true;
+                EvaluateRetryStart();
+                BroadcastLobbySnapshot();
+            }
+            else SendLobbyCommand(2, "1");
+        }
+
+        public void ReturnAfterVictory()
+        {
+            if (manager != null && manager.IsServer) ReturnEveryoneToLobby();
+        }
+
+        public async void LeaveOnlineSession()
+        {
+            if (leavingOnlineSession) return;
+            leavingOnlineSession = true;
+            try
+            {
+                if (hostOnlineSession != null) await hostOnlineSession.DeleteAsync();
+                else if (onlineSession != null) await onlineSession.LeaveAsync();
+            }
+            catch (Exception exception)
+            {
+                Debug.LogWarning($"[Multiplayer] No se pudo cerrar la sesión limpiamente: {exception.Message}");
+            }
+            finally
+            {
+                onlineSession = null;
+                hostOnlineSession = null;
+                GameplayActive = false;
+                SafeShutdown();
+                Status = "Sin conexión";
+                leavingOnlineSession = false;
             }
         }
 
@@ -187,6 +454,7 @@ namespace SchoolEscape.Multiplayer
             startInProgress = true;
             ResetSecurityAudit();
             ResetAoiAudit();
+            transport.UseWebSockets = false;
             transport.SetConnectionData("127.0.0.1", activePort, "0.0.0.0");
             Status = $"Iniciando host en puerto {activePort}…";
             bool started;
@@ -207,6 +475,7 @@ namespace SchoolEscape.Multiplayer
             }
 
             Status = $"Host activo · puerto {activePort}";
+            GameplayActive = true;
             SpawnHostPlayer();
             return true;
         }
@@ -266,6 +535,7 @@ namespace SchoolEscape.Multiplayer
             }
 
             ParseEndpoint(address, out string target, out activePort);
+            transport.UseWebSockets = false;
             transport.SetConnectionData(target, activePort);
             Status = $"Conectando a {target}:{activePort}…";
             startInProgress = true;
@@ -283,6 +553,251 @@ namespace SchoolEscape.Multiplayer
             Status = $"No se pudo iniciar el cliente hacia {target}:{activePort}";
             SafeShutdown();
             return false;
+        }
+
+        private void RegisterLobbyHandlers()
+        {
+            if (lobbyHandlersRegistered || manager == null || manager.CustomMessagingManager == null || !manager.IsListening)
+                return;
+            if (manager.IsServer)
+                manager.CustomMessagingManager.RegisterNamedMessageHandler(LobbyCommandMessage, OnLobbyCommand);
+            else
+                manager.CustomMessagingManager.RegisterNamedMessageHandler(LobbySnapshotMessage, OnLobbySnapshot);
+            lobbyHandlersRegistered = true;
+        }
+
+        private void UnregisterLobbyHandlers()
+        {
+            if (!lobbyHandlersRegistered || manager == null || manager.CustomMessagingManager == null) return;
+            if (manager.IsServer)
+                manager.CustomMessagingManager.UnregisterNamedMessageHandler(LobbyCommandMessage);
+            else
+                manager.CustomMessagingManager.UnregisterNamedMessageHandler(LobbySnapshotMessage);
+            lobbyHandlersRegistered = false;
+        }
+
+        private void SendLobbyCommand(byte command, string value)
+        {
+            if (manager == null || !manager.IsClient || manager.IsServer || manager.CustomMessagingManager == null) return;
+            using FastBufferWriter writer = new FastBufferWriter(160, Allocator.Temp);
+            writer.WriteValueSafe(command);
+            writer.WriteValueSafe(new FixedString128Bytes(value ?? string.Empty));
+            manager.CustomMessagingManager.SendNamedMessage(
+                LobbyCommandMessage, NetworkManager.ServerClientId, writer, NetworkDelivery.ReliableSequenced);
+        }
+
+        private void OnLobbyCommand(ulong senderId, FastBufferReader reader)
+        {
+            if (!manager.IsServer || senderId == NetworkManager.ServerClientId) return;
+            reader.ReadValueSafe(out byte command);
+            reader.ReadValueSafe(out FixedString128Bytes payload);
+            string value = payload.ToString();
+            switch (command)
+            {
+                case 0 when !CountdownActive && !GameplayActive:
+                    ClientPlayerName = string.IsNullOrWhiteSpace(value) ? "Jugador 2" : value;
+                    break;
+                case 1 when !GameplayActive:
+                    ClientReady = value == "1";
+                    if (!ClientReady) CancelCountdown("Jugador 2 ya no está listo.");
+                    EvaluateLobbyStart();
+                    break;
+                case 2 when !GameplayActive:
+                    ClientRetryVote = true;
+                    EvaluateRetryStart();
+                    break;
+                case 3:
+                    ReturnEveryoneToLobby();
+                    break;
+            }
+            BroadcastLobbySnapshot();
+        }
+
+        private void BroadcastLobbySnapshot()
+        {
+            if (manager == null || !manager.IsServer || manager.CustomMessagingManager == null) return;
+            foreach (ulong clientId in manager.ConnectedClientsIds)
+            {
+                if (clientId == NetworkManager.ServerClientId) continue;
+                using FastBufferWriter writer = new FastBufferWriter(320, Allocator.Temp);
+                writer.WriteValueSafe(HostReady);
+                writer.WriteValueSafe(ClientReady);
+                writer.WriteValueSafe(HostRetryVote);
+                writer.WriteValueSafe(ClientRetryVote);
+                writer.WriteValueSafe(GameplayActive);
+                writer.WriteValueSafe(matchStartInProgress);
+                writer.WriteValueSafe(CountdownActive ? countdownEndsAt - Time.unscaledTime : -1f);
+                writer.WriteValueSafe(new FixedString128Bytes(HostPlayerName ?? "Host"));
+                writer.WriteValueSafe(new FixedString128Bytes(ClientPlayerName ?? string.Empty));
+                manager.CustomMessagingManager.SendNamedMessage(
+                    LobbySnapshotMessage, clientId, writer, NetworkDelivery.ReliableSequenced);
+            }
+        }
+
+        private void OnLobbySnapshot(ulong _, FastBufferReader reader)
+        {
+            bool wasGameplayActive = GameplayActive;
+            reader.ReadValueSafe(out bool hostReady);
+            reader.ReadValueSafe(out bool clientReady);
+            reader.ReadValueSafe(out bool hostRetry);
+            reader.ReadValueSafe(out bool clientRetry);
+            reader.ReadValueSafe(out bool gameplayActive);
+            reader.ReadValueSafe(out bool preparing);
+            reader.ReadValueSafe(out float countdownRemaining);
+            reader.ReadValueSafe(out FixedString128Bytes hostName);
+            reader.ReadValueSafe(out FixedString128Bytes clientName);
+            HostReady = hostReady;
+            ClientReady = clientReady;
+            HostRetryVote = hostRetry;
+            ClientRetryVote = clientRetry;
+            GameplayActive = gameplayActive;
+            matchStartInProgress = preparing;
+            countdownEndsAt = countdownRemaining > 0f ? Time.unscaledTime + countdownRemaining : -1f;
+            HostPlayerName = hostName.ToString();
+            ClientPlayerName = clientName.ToString();
+            if (manager != null && !manager.IsServer)
+            {
+                Status = countdownRemaining > 0f
+                    ? "Partida comienza en 3…"
+                    : GameplayActive ? "Partida multijugador" : "Lobby · marca LISTO para jugar";
+            }
+            if (!wasGameplayActive && GameplayActive)
+                Time.timeScale = 1f;
+            if (wasGameplayActive && !GameplayActive)
+                Time.timeScale = 0f;
+        }
+
+        private void EvaluateLobbyStart()
+        {
+            if (!manager.IsServer || GameplayActive || CountdownActive || matchStartInProgress) return;
+            bool canStart = HostReady && (!remoteClientId.HasValue || ClientReady);
+            if (!canStart) return;
+            StartCountdown(true);
+        }
+
+        private void EvaluateRetryStart()
+        {
+            if (!manager.IsServer || CountdownActive || matchStartInProgress || session == null ||
+                session.DisplayMatchResult == PrototypeMatchResult.InProgress) return;
+            bool canRestart = HostRetryVote && (!remoteClientId.HasValue || ClientRetryVote);
+            if (!canRestart) return;
+            StartCountdown(true);
+        }
+
+        private async void StartCountdown(bool startsMatch)
+        {
+            countdownStartsMatch = startsMatch;
+            countdownEndsAt = Time.unscaledTime + 3f;
+            Status = "Partida comienza en 3…";
+            if (hostOnlineSession != null)
+            {
+                try
+                {
+                    hostOnlineSession.IsLocked = true;
+                    await hostOnlineSession.SavePropertiesAsync();
+                }
+                catch (Exception exception)
+                {
+                    Debug.LogWarning($"[Multiplayer] No se pudo bloquear la sala: {exception.Message}");
+                }
+            }
+            BroadcastLobbySnapshot();
+        }
+
+        private void UpdateLobbyCountdown()
+        {
+            if (!CountdownActive) return;
+            bool stillValid = countdownStartsMatch &&
+                              ((HostReady && (!remoteClientId.HasValue || ClientReady)) ||
+                               (HostRetryVote && (!remoteClientId.HasValue || ClientRetryVote)));
+            if (!stillValid)
+            {
+                CancelCountdown("Cuenta regresiva cancelada.");
+                return;
+            }
+            if (Time.unscaledTime < countdownEndsAt) return;
+            countdownEndsAt = -1f;
+            StartCoroutine(BeginMatchRoutine());
+        }
+
+        private IEnumerator BeginMatchRoutine()
+        {
+            if (matchStartInProgress) yield break;
+            matchStartInProgress = true;
+            GameplayActive = false;
+            HostReady = ClientReady = false;
+            HostRetryVote = ClientRetryVote = false;
+            DespawnMatchPlayers();
+            BroadcastLobbySnapshot();
+            if (session != null)
+                yield return session.ResetForNetworkMatch();
+            else yield return null;
+
+            SpawnHostPlayer();
+            if (remoteClientId.HasValue) SpawnClientAlly(remoteClientId.Value);
+            GameplayActive = true;
+            matchStartInProgress = false;
+            Status = remoteClientId.HasValue ? "Partida multijugador" : "Partida solitaria con aliado IA";
+            Time.timeScale = 1f;
+            BroadcastLobbySnapshot();
+        }
+
+        private async void CancelCountdown(string reason)
+        {
+            if (!CountdownActive) return;
+            countdownEndsAt = -1f;
+            Status = reason;
+            if (hostOnlineSession != null)
+            {
+                try
+                {
+                    hostOnlineSession.IsLocked = false;
+                    await hostOnlineSession.SavePropertiesAsync();
+                }
+                catch (Exception exception)
+                {
+                    Debug.LogWarning($"[Multiplayer] No se pudo desbloquear la sala: {exception.Message}");
+                }
+            }
+            BroadcastLobbySnapshot();
+        }
+
+        private async void ReturnEveryoneToLobby()
+        {
+            if (manager == null || !manager.IsServer) return;
+            GameplayActive = false;
+            matchStartInProgress = false;
+            countdownEndsAt = -1f;
+            HostReady = ClientReady = false;
+            HostRetryVote = ClientRetryVote = false;
+            DespawnMatchPlayers();
+            Status = "Lobby · marca LISTO para jugar";
+            Time.timeScale = 0f;
+            if (hostOnlineSession != null)
+            {
+                try
+                {
+                    hostOnlineSession.IsLocked = false;
+                    await hostOnlineSession.SavePropertiesAsync();
+                }
+                catch (Exception exception)
+                {
+                    Debug.LogWarning($"[Multiplayer] No se pudo reabrir la sala: {exception.Message}");
+                }
+            }
+            BroadcastLobbySnapshot();
+        }
+
+        private void DespawnMatchPlayers()
+        {
+            if (manager == null || !manager.IsServer || manager.SpawnManager == null) return;
+            foreach (NetworkClient client in manager.ConnectedClients.Values.ToArray())
+            {
+                NetworkObject playerObject = client.PlayerObject;
+                if (playerObject != null && playerObject.IsSpawned)
+                    playerObject.Despawn(true);
+            }
+            remoteAlly = null;
         }
 
         public void StopSession()
@@ -329,10 +844,16 @@ namespace SchoolEscape.Multiplayer
         {
             startInProgress = false;
             UnregisterEnemySnapshotHandler();
+            UnregisterLobbyHandlers();
             ClearEnemyVisuals();
             visibleEnemyIds.Clear();
             nextVisibleEnemyIds.Clear();
             remoteClientId = null;
+            GameplayActive = false;
+            matchStartInProgress = false;
+            countdownEndsAt = -1f;
+            HostReady = ClientReady = false;
+            HostRetryVote = ClientRetryVote = false;
             if (manager == null || manager.ShutdownInProgress) return;
             if (manager.IsListening || manager.IsClient || manager.IsServer)
                 manager.Shutdown();
@@ -361,26 +882,54 @@ namespace SchoolEscape.Multiplayer
             {
                 Status = "Conectado como jugador 2";
                 RegisterEnemySnapshotHandler();
+                RegisterLobbyHandlers();
+                SendLobbyCommand(0, LocalPlayerName);
                 return;
             }
 
-            if (clientId == NetworkManager.ServerClientId) return;
+            RegisterLobbyHandlers();
+            if (clientId == NetworkManager.ServerClientId)
+            {
+                BroadcastLobbySnapshot();
+                return;
+            }
             remoteClientId = clientId;
+            ClientReady = false;
+            ClientRetryVote = false;
             Status = "Jugador 2 conectado";
-            SpawnClientAlly(clientId);
-            SendEnemySnapshot(clientId);
+            if (GameplayActive)
+            {
+                SpawnClientAlly(clientId);
+                SendEnemySnapshot(clientId);
+            }
+            BroadcastLobbySnapshot();
         }
 
         private void OnClientDisconnected(ulong clientId)
         {
             if (manager != null && manager.IsServer && clientId != NetworkManager.ServerClientId)
             {
+                bool wasRematchCountdown = CountdownActive && (HostRetryVote || ClientRetryVote);
                 visibleEnemyIds.Clear();
                 nextVisibleEnemyIds.Clear();
                 remoteClientId = null;
                 remoteAlly = null;
-                session?.RestoreSoloAllyAfterDisconnect();
-                Status = "Jugador 2 desconectado · continúa el aliado IA";
+                ClientReady = false;
+                ClientRetryVote = false;
+                ClientPlayerName = string.Empty;
+                CancelCountdown("Jugador 2 se desconectó; cuenta regresiva cancelada.");
+                if (wasRematchCountdown)
+                {
+                    ReturnEveryoneToLobby();
+                    return;
+                }
+                if (GameplayActive)
+                {
+                    session?.RestoreSoloAllyAfterDisconnect();
+                    Status = "Jugador 2 desconectado · continúa el aliado IA";
+                }
+                else Status = "Jugador 2 desconectado · lobby abierto";
+                BroadcastLobbySnapshot();
                 return;
             }
 

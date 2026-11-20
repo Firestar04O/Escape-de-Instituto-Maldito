@@ -241,6 +241,9 @@ public class SchoolEscapePrototype : MonoBehaviour
     {
         UpdateLandscapeOrientation();
 
+        SchoolEscapeNetworkBootstrap network = SchoolEscapeNetworkBootstrap.Instance;
+        if (network != null && network.IsListening && !network.GameplayActive) return;
+
         if (IsNetworkReplica) return;
 
         if (Keyboard.current != null && Keyboard.current.rKey.wasPressedThisFrame)
@@ -1556,6 +1559,64 @@ public class SchoolEscapePrototype : MonoBehaviour
         Ally = null;
     }
 
+    public IEnumerator ResetForNetworkMatch()
+    {
+        bool rebuildAsReplica = IsNetworkReplica;
+        foreach (PrototypeEnemy enemy in enemies.ToArray())
+            if (enemy != null) Destroy(enemy.gameObject);
+        enemies.Clear();
+        interactables.Clear();
+        activatedExitPanels.Clear();
+        activeEnemySpawnPoints.Clear();
+
+        if (Player != null) Destroy(Player.gameObject);
+        if (Ally != null) Destroy(Ally.gameObject);
+        Player = null;
+        Ally = null;
+        networkCameraTarget = null;
+
+        if (activeRescueRoomInstance != null) Destroy(activeRescueRoomInstance);
+        if (activeRoomInstance != null) Destroy(activeRoomInstance);
+        activeRoomInstance = null;
+        authoredRoom = null;
+        activeRescueRoomInstance = null;
+        activeRescueRoom = null;
+        activeRescueEntrance = null;
+        rescueEntranceInteraction = null;
+        connectedRescueDoor = null;
+        rescuePassageLink = null;
+        activeRescueCaptive = null;
+        rescueQueue.Clear();
+
+        HasKey = false;
+        exitOpening = false;
+        exitOpeningEndsAt = 0f;
+        Victory = false;
+        MatchResult = PrototypeMatchResult.InProgress;
+        roomTransitionInProgress = false;
+        currentRoomIndex = -1;
+        rescueEntranceOpening = false;
+        rescueEntranceOpen = false;
+        noSurvivorDefeatAt = -1f;
+        recentDirectorActivity = 0f;
+        inventory.Reset();
+        RunTime = 0f;
+        normalEnemiesSpawnedThisRoom = 0;
+        smallEnemiesSpawnedThisRoom = 0;
+        spawnTimer = 10f;
+        message = "Encuentra la llave y escapa";
+        messageUntil = Time.time + 4f;
+        playerMessage = allyMessage = string.Empty;
+        playerMessageUntil = allyMessageUntil = 0f;
+
+        yield return null;
+        roomSequence = Resources.Load<RoomSequenceCatalog>("RoomSequenceCatalog");
+        if (rebuildAsReplica && roomSequence != null && roomSequence.Count > 0)
+            LoadReplicaRoom(0);
+        else
+            BuildPrototype();
+    }
+
     public void Restart()
     {
         int buildIndex = UnityEngine.SceneManagement.SceneManager.GetActiveScene().buildIndex;
@@ -1613,6 +1674,7 @@ public class SchoolEscapePrototype : MonoBehaviour
 
     private void OnGUI()
     {
+        if (BasicGameFlowUI.IsMenuVisible) return;
         if (MobileHud != null && MobileHud.isActiveAndEnabled) return;
         EnsureStyles();
         float scale = Mathf.Clamp(Screen.width / 1000f, .72f, 1.35f);

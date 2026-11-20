@@ -134,6 +134,8 @@ public class PrototypePlayer : PrototypeActor
             return;
         }
 
+        if (!EnhancedTouchSupport.enabled) return;
+
         foreach (Touch touch in Touch.activeTouches)
         {
             if (!aimingFlash && touch.phase == UnityEngine.InputSystem.TouchPhase.Began && button.Contains(ToTopLeft(touch.screenPosition)))
