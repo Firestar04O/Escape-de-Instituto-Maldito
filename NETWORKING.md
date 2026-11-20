@@ -75,6 +75,34 @@ La corrección inicial grande registrada al aparecer el objeto corresponde a ali
 
 ## Verificación pendiente
 
-- Rewind del flash, validación anti-cheat y AoI pertenecen a las semanas 11–13 y se implementarán por separado.
+- Validación anti-cheat y AoI pertenecen a las semanas 12–13 y se implementarán por separado.
+
+## Compensación de lag del flash — Semana 11
+
+### Diseño implementado
+
+- `ServerRewindHistory.RecordFrame` guarda a 30 Hz las posiciones autoritativas de los dos jugadores y hasta 32 enemigos en un buffer circular de 64 frames.
+- Cada snapshot visual de enemigos incluye `NetworkManager.ServerTime.Time` y `ServerTime.Tick`. El cliente devuelve ese tiempo en `UseFlashRpc`, por lo que no decide el resultado: solo informa qué estado del servidor estaba viendo.
+- `ServerRewindHistory.TryGetFrames` encuentra los frames anterior y posterior e interpola las posiciones para el instante solicitado.
+- `SchoolEscapePrototype.FireCompensatedFlashFor` evalúa el cono histórico sin mover ni alterar temporalmente los objetos actuales. El servidor aplica después el resultado sobre los enemigos que siguen siendo válidos.
+- El cap es `750 ms`. Cubre el objetivo de 250 ms RTT, el snapshot de enemigos a 15 Hz, buffers e interpolación, pero rechaza explícitamente solicitudes de un segundo o más para limitar la ventaja del atacante.
+- La telemetría conserva solicitudes aceptadas/rechazadas, impactos con rewind, impactos que habría dado el estado actual y antigüedad de la última acción.
+
+### Evidencia a latencia
+
+Prueba MPPM del 20 de noviembre de 2026: Editor principal como host y `Player 2` como cliente, con Network Simulator oficial. Se colocó un enemigo a 4 m frente al cliente, se programó su esquiva fuera del cono y el cliente disparó justo antes de verla.
+
+| Medición real | Resultado |
+|---|---|
+| RTT informado por Unity Transport | `267 ms` |
+| Antigüedad del estado visto al validar | `267 ms` |
+| Impactos aceptados con rewind | `1/1` |
+| Impactos que habría aceptado el estado actual | `0/1` |
+| Resultado autoritativo | `Aceptado · rewind 1 / actual 0 · 267 ms` |
+| Solicitud artificial de `1000 ms` | Rechazada por superar el cap de `750 ms` |
+
+Primer intento registrado: con `300 ms RTT` y cap inicial de `500 ms`, la acción llegó con `534 ms` de antigüedad y fue rechazada. Esa evidencia motivó el cap final de `750 ms`; no se ocultó ni se sustituyó por un valor estimado.
+
+Punto de retorno anterior a Semana 11: commit `b47b779`.
 
 Punto de retorno anterior a Semana 10: commit `69bf3754cdb2627489893d778890795c50404b49`.

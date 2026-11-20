@@ -1221,8 +1221,27 @@ public class SchoolEscapePrototype : MonoBehaviour
 
     public bool FireFlashFor(PrototypeActor actor, Vector3 requestedDirection)
     {
-        if (actor == null || actor.IsDown || actor.IsCaptive || actor.Dragger != null || !UseBattery(actor)) return false;
-        AddDirectorActivity(.16f);
+        return FireFlashInternal(actor, requestedDirection, null, 0d, 0d);
+    }
+
+    public bool FireCompensatedFlashFor(
+        PrototypeActor actor,
+        Vector3 requestedDirection,
+        SchoolEscape.Multiplayer.ServerRewindHistory history,
+        double observedServerTime,
+        double currentServerTime)
+    {
+        return FireFlashInternal(actor, requestedDirection, history, observedServerTime, currentServerTime);
+    }
+
+    private bool FireFlashInternal(
+        PrototypeActor actor,
+        Vector3 requestedDirection,
+        SchoolEscape.Multiplayer.ServerRewindHistory history,
+        double observedServerTime,
+        double currentServerTime)
+    {
+        if (actor == null || actor.IsDown || actor.IsCaptive || actor.Dragger != null) return false;
 
         Vector3 direction = requestedDirection;
         if (direction.sqrMagnitude < .01f)
@@ -1246,22 +1265,51 @@ public class SchoolEscapePrototype : MonoBehaviour
         direction.y = 0f;
         if (direction.sqrMagnitude < .01f) direction = Vector3.forward;
         direction.Normalize();
-        int affectedEnemies = 0;
-        foreach (PrototypeEnemy enemy in enemies.ToArray())
+
+        List<PrototypeEnemy> affected = null;
+        int currentStateHits = 0;
+        if (history != null && !history.TryEvaluateFlash(
+                this,
+                actor,
+                direction,
+                observedServerTime,
+                currentServerTime,
+                out affected,
+                out currentStateHits,
+                out string rejectionReason))
         {
-            if (enemy == null) continue;
-            Vector3 delta = enemy.transform.position - actor.transform.position;
-            delta.y = 0f;
-            if (delta.magnitude <= 7f && Vector3.Angle(direction, delta) <= 35f)
+            ShowPersonalMessage(actor, $"Flash rechazado: {rejectionReason}", 2f);
+            return false;
+        }
+
+        if (!UseBattery(actor)) return false;
+        AddDirectorActivity(.16f);
+
+        if (affected == null)
+        {
+            affected = new List<PrototypeEnemy>();
+            foreach (PrototypeEnemy enemy in enemies.ToArray())
             {
-                enemy.HitByFlash();
-                affectedEnemies++;
+                if (enemy == null) continue;
+                Vector3 delta = enemy.transform.position - actor.transform.position;
+                delta.y = 0f;
+                if (delta.magnitude <= 7f && Vector3.Angle(direction, delta) <= 35f)
+                    affected.Add(enemy);
             }
         }
 
-        ShowPersonalMessage(actor, affectedEnemies == 1
+        int affectedEnemies = 0;
+        foreach (PrototypeEnemy enemy in affected)
+        {
+            if (enemy == null) continue;
+            enemy.HitByFlash();
+            affectedEnemies++;
+        }
+
+        string comparison = history != null ? $" · sin rewind: {currentStateHits}" : string.Empty;
+        ShowPersonalMessage(actor, (affectedEnemies == 1
             ? "Flash: 1 cultista afectado"
-            : $"Flash: {affectedEnemies} cultistas afectados", 1.5f);
+            : $"Flash: {affectedEnemies} cultistas afectados") + comparison, 1.5f);
 
         GameObject flash = CreateBox(
             "Destello remoto",

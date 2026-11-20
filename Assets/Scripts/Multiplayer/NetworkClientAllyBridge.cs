@@ -207,7 +207,7 @@ namespace SchoolEscape.Multiplayer
 
         public void RequestFlash()
         {
-            if (IsOwner && IsClient) UseFlashRpc(Vector3.zero);
+            if (IsOwner && IsClient) SendFlashRequest(Vector3.zero);
         }
 
         [Rpc(SendTo.Server, InvokePermission = RpcInvokePermission.Owner, Delivery = RpcDelivery.Unreliable)]
@@ -323,11 +323,24 @@ namespace SchoolEscape.Multiplayer
         }
 
         [Rpc(SendTo.Server, InvokePermission = RpcInvokePermission.Owner)]
-        private void UseFlashRpc(Vector3 requestedDirection)
+        private void UseFlashRpc(Vector3 requestedDirection, double observedServerTime)
         {
             if (Time.time < nextFlashTime || session == null || ally == null || ally.IsDown || ally.IsCaptive) return;
             nextFlashTime = Time.time + .25f;
-            session.FireFlashFor(ally, requestedDirection);
+            SchoolEscapeNetworkBootstrap bootstrap = SchoolEscapeNetworkBootstrap.Instance;
+            if (bootstrap == null) return;
+            session.FireCompensatedFlashFor(ally, requestedDirection, bootstrap.RewindHistory, observedServerTime, NetworkManager.ServerTime.Time);
+        }
+
+        private void SendFlashRequest(Vector3 requestedDirection)
+        {
+            SchoolEscapeNetworkBootstrap bootstrap = SchoolEscapeNetworkBootstrap.Instance;
+            if (bootstrap == null) return;
+            Vector3 direction = requestedDirection;
+            if (direction.sqrMagnitude < .01f)
+                bootstrap.TryGetClosestRemoteEnemyDirection(ally.transform.position, 7f, out direction);
+            if (direction.sqrMagnitude < .01f) direction = ally.transform.forward;
+            UseFlashRpc(direction.normalized, bootstrap.ObservedServerTime);
         }
 
         private void UpdateServerInteraction(bool pressed)
@@ -530,7 +543,7 @@ namespace SchoolEscape.Multiplayer
         private void EndFlashAim()
         {
             if (manualFlashAim)
-                UseFlashRpc(flashAimDirection);
+                SendFlashRequest(flashAimDirection);
             else if (!flashWasDragged)
                 RequestFlash();
 

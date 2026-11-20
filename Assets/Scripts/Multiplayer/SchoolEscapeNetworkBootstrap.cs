@@ -36,10 +36,17 @@ namespace SchoolEscape.Multiplayer
         private float nextEnemySnapshotTime;
         private bool enemyHandlerRegistered;
         private readonly List<EnemyVisualProxy> enemyVisuals = new List<EnemyVisualProxy>();
+        private readonly ServerRewindHistory rewindHistory = new ServerRewindHistory();
 
         public int RemoteEnemyCount => enemyVisuals.Count;
         public int RemoteNormalEnemyCount { get; private set; }
         public int RemoteSmallEnemyCount { get; private set; }
+        public double LatestEnemySnapshotServerTime { get; private set; }
+        public int LatestEnemySnapshotServerTick { get; private set; }
+        public ServerRewindHistory RewindHistory => rewindHistory;
+        public double ObservedServerTime => LatestEnemySnapshotServerTime > 0d
+            ? LatestEnemySnapshotServerTime
+            : manager != null ? manager.ServerTime.Time : 0d;
 
         private sealed class EnemyVisualProxy
         {
@@ -113,6 +120,9 @@ namespace SchoolEscape.Multiplayer
         private void Update()
         {
             if (manager == null || !manager.IsListening) return;
+
+            if (manager.IsServer)
+                rewindHistory.RecordFrame(session, manager.ServerTime.Tick, manager.ServerTime.Time);
 
             if (manager.IsServer && remoteClientId.HasValue && Time.unscaledTime >= nextEnemySnapshotTime)
             {
@@ -312,7 +322,9 @@ namespace SchoolEscape.Multiplayer
             for (int index = 0; index < activeEnemies.Count; index++)
                 if (activeEnemies[index] != null) count++;
 
-            using FastBufferWriter writer = new FastBufferWriter(16 + count * 40, Allocator.Temp);
+            using FastBufferWriter writer = new FastBufferWriter(32 + count * 40, Allocator.Temp);
+            writer.WriteValueSafe(manager.ServerTime.Time);
+            writer.WriteValueSafe(manager.ServerTime.Tick);
             writer.WriteValueSafe(count);
             for (int index = 0; index < activeEnemies.Count; index++)
             {
@@ -342,7 +354,11 @@ namespace SchoolEscape.Multiplayer
 
         private void ReceiveEnemySnapshot(ulong senderClientId, FastBufferReader reader)
         {
+            reader.ReadValueSafe(out double snapshotServerTime);
+            reader.ReadValueSafe(out int snapshotServerTick);
             reader.ReadValueSafe(out int count);
+            LatestEnemySnapshotServerTime = snapshotServerTime;
+            LatestEnemySnapshotServerTick = snapshotServerTick;
             count = Mathf.Clamp(count, 0, 32);
             RemoteNormalEnemyCount = 0;
             RemoteSmallEnemyCount = 0;
@@ -416,6 +432,25 @@ namespace SchoolEscape.Multiplayer
             enemyVisuals.Clear();
             RemoteNormalEnemyCount = 0;
             RemoteSmallEnemyCount = 0;
+            LatestEnemySnapshotServerTime = 0d;
+            LatestEnemySnapshotServerTick = 0;
+        }
+
+        public bool TryGetClosestRemoteEnemyDirection(Vector3 origin, float maximumDistance, out Vector3 direction)
+        {
+            direction = Vector3.zero;
+            float closestDistance = maximumDistance;
+            foreach (EnemyVisualProxy proxy in enemyVisuals)
+            {
+                if (proxy.GameObject == null) continue;
+                Vector3 delta = proxy.GameObject.transform.position - origin;
+                delta.y = 0f;
+                float distance = delta.magnitude;
+                if (distance >= closestDistance) continue;
+                closestDistance = distance;
+                direction = delta.normalized;
+            }
+            return direction.sqrMagnitude > .01f;
         }
 
         private void UnregisterEnemySnapshotHandler()
