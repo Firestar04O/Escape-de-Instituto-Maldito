@@ -92,6 +92,9 @@ public class SchoolEscapePrototype : MonoBehaviour
     public string EnemyCounterText =>
         $"Normales {ActiveNormalEnemyCount}/{CurrentNormalCap} ({normalEnemiesSpawnedThisRoom}/{NormalRoomBudget})  ·  " +
         $"Chicos {ActiveSmallEnemyCount}/{CurrentSmallCap} ({smallEnemiesSpawnedThisRoom}/{SmallRoomBudget})";
+    public string NetworkAoiStatusText => SchoolEscapeNetworkBootstrap.Instance != null
+        ? SchoolEscapeNetworkBootstrap.Instance.AoiStatusText
+        : "Red: sin sesión";
     public MobileHudController MobileHud { get; private set; }
     public Transform CameraFollowTarget
     {
@@ -1617,9 +1620,9 @@ public class SchoolEscapePrototype : MonoBehaviour
         float w = Screen.width / scale;
         float h = Screen.height / scale;
 
-        GUI.Box(new Rect(18, 16, 370, 146), "");
+        GUI.Box(new Rect(18, 16, 390, 166), "");
         GUI.Label(new Rect(32, 25, 290, 32), $"SCHOOL ESCAPE: {DisplayRoomProgressText}", titleStyle);
-        GUI.Label(new Rect(32, 55, 345, 100), $"Vida: {Hearts(DisplayHealth)}   Pilas: {DisplayBatteries}/3   Venda: {(DisplayBandages > 0 ? "Sí" : "No")}\nSalida: {DisplayExitStatusText}   Peligro: x{DisplayDangerMultiplier:0.0}\n{EnemyCounterText}\n{DisplayInteractionStatus}", bodyStyle);
+        GUI.Label(new Rect(32, 55, 365, 122), $"Vida: {Hearts(DisplayHealth)}   Pilas: {DisplayBatteries}/3   Venda: {(DisplayBandages > 0 ? "Sí" : "No")}\nSalida: {DisplayExitStatusText}   Peligro: x{DisplayDangerMultiplier:0.0}\n{EnemyCounterText}\n{NetworkAoiStatusText}\n{DisplayInteractionStatus}", bodyStyle);
 
         if (Ally != null)
         {

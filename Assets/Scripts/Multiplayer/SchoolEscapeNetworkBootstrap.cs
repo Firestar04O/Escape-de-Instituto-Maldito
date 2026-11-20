@@ -23,6 +23,8 @@ namespace SchoolEscape.Multiplayer
         private const string ClientAllyResource = "Multiplayer/NetworkClientAlly";
         private const string EnemySnapshotMessage = "SchoolEscape.EnemySnapshot";
         private const float EnemySnapshotInterval = 1f / 15f;
+        public const float AoiEnterDistance = 18f;
+        public const float AoiExitDistance = 22f;
         private const int SecurityKickThreshold = 6;
         private const double SecurityStrikeWindowSeconds = 10d;
 
@@ -38,13 +40,29 @@ namespace SchoolEscape.Multiplayer
         private float nextEnemySnapshotTime;
         private bool enemyHandlerRegistered;
         private readonly List<EnemyVisualProxy> enemyVisuals = new List<EnemyVisualProxy>();
+        private readonly List<PrototypeEnemy> relevantEnemies = new List<PrototypeEnemy>(24);
+        private readonly HashSet<int> visibleEnemyIds = new HashSet<int>();
+        private readonly HashSet<int> nextVisibleEnemyIds = new HashSet<int>();
         private readonly ServerRewindHistory rewindHistory = new ServerRewindHistory();
         private int securityStrikes;
         private double securityWindowStartedAt = -1d;
 
         public int RemoteEnemyCount => enemyVisuals.Count;
+        public int LatestServerEnemyCount { get; private set; }
         public int RemoteNormalEnemyCount { get; private set; }
         public int RemoteSmallEnemyCount { get; private set; }
+        public int KnownRelevantObjectCount =>
+            (manager != null && manager.SpawnManager != null ? manager.SpawnManager.SpawnedObjects.Count : 0) +
+            enemyVisuals.Count;
+        public int AoiEnterEvents { get; private set; }
+        public int AoiExitEvents { get; private set; }
+        public int EnemySnapshotsSent { get; private set; }
+        public long EnemySnapshotPayloadBytes { get; private set; }
+        public string AoiStatusText => manager != null && manager.IsClient && !manager.IsServer
+            ? $"Red: {KnownRelevantObjectCount} conocidos · AoI {RemoteEnemyCount}/{LatestServerEnemyCount}"
+            : manager != null && manager.IsServer && remoteClientId.HasValue
+                ? $"AoI cliente: {visibleEnemyIds.Count}/{(session != null ? session.ActiveEnemyCount : 0)}"
+                : "Red: sin cliente remoto";
         public double LatestEnemySnapshotServerTime { get; private set; }
         public int LatestEnemySnapshotServerTick { get; private set; }
         public ServerRewindHistory RewindHistory => rewindHistory;
@@ -168,6 +186,7 @@ namespace SchoolEscape.Multiplayer
 
             startInProgress = true;
             ResetSecurityAudit();
+            ResetAoiAudit();
             transport.SetConnectionData("127.0.0.1", activePort, "0.0.0.0");
             Status = $"Iniciando host en puerto {activePort}…";
             bool started;
@@ -311,6 +330,8 @@ namespace SchoolEscape.Multiplayer
             startInProgress = false;
             UnregisterEnemySnapshotHandler();
             ClearEnemyVisuals();
+            visibleEnemyIds.Clear();
+            nextVisibleEnemyIds.Clear();
             remoteClientId = null;
             if (manager == null || manager.ShutdownInProgress) return;
             if (manager.IsListening || manager.IsClient || manager.IsServer)
@@ -354,6 +375,8 @@ namespace SchoolEscape.Multiplayer
         {
             if (manager != null && manager.IsServer && clientId != NetworkManager.ServerClientId)
             {
+                visibleEnemyIds.Clear();
+                nextVisibleEnemyIds.Clear();
                 remoteClientId = null;
                 remoteAlly = null;
                 session?.RestoreSoloAllyAfterDisconnect();
@@ -372,18 +395,39 @@ namespace SchoolEscape.Multiplayer
         {
             if (manager == null || !manager.IsServer || session == null) return;
             IReadOnlyList<PrototypeEnemy> activeEnemies = session.ActiveEnemies;
-            int count = 0;
-            for (int index = 0; index < activeEnemies.Count; index++)
-                if (activeEnemies[index] != null) count++;
-
-            using FastBufferWriter writer = new FastBufferWriter(32 + count * 40, Allocator.Temp);
-            writer.WriteValueSafe(manager.ServerTime.Time);
-            writer.WriteValueSafe(manager.ServerTime.Tick);
-            writer.WriteValueSafe(count);
+            Vector3 observerPosition = remoteAlly != null ? remoteAlly.transform.position : Vector3.zero;
+            relevantEnemies.Clear();
+            nextVisibleEnemyIds.Clear();
+            int totalCount = 0;
             for (int index = 0; index < activeEnemies.Count; index++)
             {
                 PrototypeEnemy enemy = activeEnemies[index];
                 if (enemy == null) continue;
+                totalCount++;
+                bool wasVisible = visibleEnemyIds.Contains(enemy.SnapshotId);
+                float threshold = wasVisible ? AoiExitDistance : AoiEnterDistance;
+                Vector3 delta = enemy.transform.position - observerPosition;
+                delta.y = 0f;
+                if (delta.sqrMagnitude > threshold * threshold) continue;
+
+                relevantEnemies.Add(enemy);
+                nextVisibleEnemyIds.Add(enemy.SnapshotId);
+                if (!wasVisible) AoiEnterEvents++;
+            }
+
+            foreach (int previousId in visibleEnemyIds)
+                if (!nextVisibleEnemyIds.Contains(previousId)) AoiExitEvents++;
+            visibleEnemyIds.Clear();
+            foreach (int id in nextVisibleEnemyIds) visibleEnemyIds.Add(id);
+
+            using FastBufferWriter writer = new FastBufferWriter(36 + relevantEnemies.Count * 40, Allocator.Temp);
+            writer.WriteValueSafe(manager.ServerTime.Time);
+            writer.WriteValueSafe(manager.ServerTime.Tick);
+            writer.WriteValueSafe(totalCount);
+            writer.WriteValueSafe(relevantEnemies.Count);
+            for (int index = 0; index < relevantEnemies.Count; index++)
+            {
+                PrototypeEnemy enemy = relevantEnemies[index];
                 writer.WriteValueSafe(enemy.SnapshotId);
                 Vector3 position = enemy.transform.position;
                 Quaternion rotation = enemy.transform.rotation;
@@ -397,6 +441,8 @@ namespace SchoolEscape.Multiplayer
                 clientId,
                 writer,
                 NetworkDelivery.UnreliableSequenced);
+            EnemySnapshotsSent++;
+            EnemySnapshotPayloadBytes += writer.Length;
         }
 
         private void RegisterEnemySnapshotHandler()
@@ -410,9 +456,11 @@ namespace SchoolEscape.Multiplayer
         {
             reader.ReadValueSafe(out double snapshotServerTime);
             reader.ReadValueSafe(out int snapshotServerTick);
+            reader.ReadValueSafe(out int totalCount);
             reader.ReadValueSafe(out int count);
             LatestEnemySnapshotServerTime = snapshotServerTime;
             LatestEnemySnapshotServerTick = snapshotServerTick;
+            LatestServerEnemyCount = Mathf.Clamp(totalCount, 0, 32);
             count = Mathf.Clamp(count, 0, 32);
             RemoteNormalEnemyCount = 0;
             RemoteSmallEnemyCount = 0;
@@ -488,6 +536,17 @@ namespace SchoolEscape.Multiplayer
             RemoteSmallEnemyCount = 0;
             LatestEnemySnapshotServerTime = 0d;
             LatestEnemySnapshotServerTick = 0;
+            LatestServerEnemyCount = 0;
+        }
+
+        private void ResetAoiAudit()
+        {
+            visibleEnemyIds.Clear();
+            nextVisibleEnemyIds.Clear();
+            AoiEnterEvents = 0;
+            AoiExitEvents = 0;
+            EnemySnapshotsSent = 0;
+            EnemySnapshotPayloadBytes = 0;
         }
 
         public bool TryGetClosestRemoteEnemyDirection(Vector3 origin, float maximumDistance, out Vector3 direction)

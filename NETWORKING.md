@@ -145,3 +145,49 @@ Prueba MPPM del 20 de noviembre de 2026 con Editor principal como host y `Player
 Contadores observados al finalizar: `RejectedMovementCount=1`, `RejectedActionCount=5`, `SecurityStrikeCount=6`. La consola del host emitió entradas `[Security]` por cada rechazo y por la expulsión.
 
 Punto de retorno anterior a Semana 12: commit `6795b3e`.
+
+## Área de Interés — Semana 13
+
+### Regla de visibilidad
+
+Los jugadores son `NetworkObject` y conservan la visibilidad predeterminada de NGO: el host y el propietario nunca se ocultan. Los enemigos ya usaban snapshots dirigidos mediante `CustomMessagingManager`, por lo que la AoI se implementó en ese canal equivalente en vez de convertirlos artificialmente en objetos de red duplicados.
+
+- El servidor evalúa la distancia horizontal entre cada enemigo y el jugador remoto antes de construir cada snapshot de 15 Hz.
+- Un enemigo desconocido entra al conjunto relevante a `18 m` o menos.
+- Un enemigo ya conocido permanece hasta superar `22 m`.
+- La separación de 4 m es la histéresis que evita crear/destruir la representación al oscilar cerca del borde.
+- Los enemigos fuera del conjunto no se serializan ni consumen ancho de banda hacia ese cliente.
+- Cada snapshot incluye el total autoritativo y el subconjunto visible. El HUD muestra `Red: N conocidos · AoI visibles/total`; `N` suma los `NetworkObject` de NGO y las representaciones relevantes de enemigos.
+- El diseño actual admite un único cliente remoto, coherente con el límite de dos jugadores. Los conjuntos pueden separarse por `clientId` si el proyecto aumenta ese límite.
+
+Documentación instalada consultada para NGO 2.14 y Multiplayer Tools 2.2: `basics/object-visibility.md`, `advanced-topics/message-system/custom-messages.md`, `runtime-stats-monitor.md` y `profiler.md`.
+
+### Verificación de histéresis
+
+Prueba MPPM con 15 enemigos congelados en posiciones reproducibles: cinco cerca del cliente y diez a más de 35 m.
+
+| Posición del enemigo de prueba | Estado anterior | Resultado observado |
+|---:|---|---|
+| 20 m | visible | Sigue visible porque no superó el radio de salida de 22 m |
+| 23 m | visible | Se oculta; el cliente pasa de 5 a 4 enemigos conocidos |
+| 20 m | oculto | Sigue oculto porque no cruzó el radio de entrada de 18 m |
+| 17 m | oculto | Reaparece; el cliente vuelve a 5 enemigos conocidos |
+
+El contador del servidor registró seis entradas —las cinco iniciales más el reingreso— y una salida. El cliente mostró `Red: 7 conocidos · AoI 5/15`: dos jugadores de NGO y cinco enemigos relevantes.
+
+### Comparación con Network Profiler
+
+Medición real del 20 de noviembre de 2026 con los módulos `NGO Messages` y `NGO Objects`. Cada captura solicitó 60 segundos, conservó 1793 frames y analizó los mismos 1792 frames útiles, excluyendo el primero por ser parcial. La carga fue idéntica: 15 enemigos, cinco dentro del AoI y diez fuera.
+
+| Métrica medida | Semana 12, sin AoI | Semana 13, con AoI | Variación |
+|---|---:|---:|---:|
+| Objetos relevantes conocidos por el cliente | 17 | 7 | -58.82% |
+| Total Bytes Sent | 457,344 B | 232,488 B | -49.17% |
+| Named Message Bytes Sent | 361,746 B | 135,044 B | -62.67% |
+| Total Bytes Received | 71,888 B | 71,872 B | -16 B, estable |
+| Object Spawned Bytes Sent | 0 B | 0 B | Sin cambios durante la ventana estable |
+| Object Destroyed Bytes Sent | 0 B | 0 B | Sin cambios durante la ventana estable |
+
+Los eventos de entrada/salida de enemigos son creaciones locales alimentadas por mensajes personalizados, por eso no aparecen como bytes de `NetworkObject` Spawn/Destroy. El ahorro relevante se observa en `Named Message Bytes Sent` y en el total enviado. Los cambios de visibilidad se probaron antes de iniciar la ventana estable para no contaminar la comparación de tráfico continuo.
+
+Punto de retorno anterior a Semana 13: commit `27d5b64`.

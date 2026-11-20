@@ -84,6 +84,7 @@ namespace SchoolEscape.UI
                 statusText.text = $"{session.DisplayRoomProgressText}   Vida {session.DisplayHealth}/3   Pilas {session.DisplayBatteries}/3   Venda {(session.DisplayBandages > 0 ? "Sí" : "No")}\n" +
                                   $"Salida {session.DisplayExitStatusText}   Peligro x{session.DisplayDangerMultiplier:0.0}\n" +
                                   session.EnemyCounterText +
+                                  $"\n{session.NetworkAoiStatusText}" +
                                   $"\n{session.DisplayInteractionStatus}";
             }
 

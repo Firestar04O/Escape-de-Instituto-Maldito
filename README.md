@@ -25,7 +25,18 @@ Proyecto Integrador multijugador en Unity con Netcode for GameObjects y arquitec
 
 ## Semana 13 — Área de Interés
 
-Pendiente: regla de visibilidad con histéresis, contador de objetos conocidos y medición real durante 60 segundos mediante Network Profiler o Runtime Network Stats Monitor.
+- AoI autoritativa por distancia aplicada a los snapshots de enemigos: entrada a 18 m y salida a 22 m.
+- El host, el propietario y los dos objetos de jugador permanecen siempre visibles mediante la replicación normal de NGO.
+- Contador en HUD: objetos relevantes conocidos y enemigos visibles frente al total del servidor.
+- Prueba de histéresis: visible a 20 m, oculto a 23 m, aún oculto al volver a 20 m y visible nuevamente a 17 m.
+
+| Network Profiler, 60 s | Antes | Con AoI | Cambio |
+|---|---:|---:|---:|
+| Objetos relevantes conocidos | 17 | 7 | -58.82% |
+| Total bytes enviados | 457,344 B | 232,488 B | -49.17% |
+| Named Message bytes enviados | 361,746 B | 135,044 B | -62.67% |
+| Total bytes recibidos | 71,888 B | 71,872 B | estable |
+| Spawn / destroy bytes enviados | 0 / 0 B | 0 / 0 B | estable |
 
 ## Documentación técnica
 
