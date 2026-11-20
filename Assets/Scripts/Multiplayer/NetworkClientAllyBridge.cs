@@ -19,6 +19,12 @@ namespace SchoolEscape.Multiplayer
         private const float VisualCorrectionSharpness = 14f;
         private const float FlashAimThreshold = 48f;
         private const float FlashCancelRadius = 32f;
+        private const uint MaximumAcceptedTickAdvance = 12;
+        private const float MaximumInputMagnitude = 1.05f;
+        private const float BandageCooldown = .5f;
+        private const float FlashCooldown = .25f;
+        private const double MaximumFlashRewindSeconds = .75d;
+        private const double FlashFutureToleranceSeconds = .1d;
 
         public static NetworkClientAllyBridge LocalOwner { get; private set; }
 
@@ -62,6 +68,7 @@ namespace SchoolEscape.Multiplayer
         private readonly PredictedInput[] inputHistory = new PredictedInput[InputHistorySize];
         private float interactionProgress;
         private float nextFlashTime;
+        private float nextBandageTime;
         private uint localInputTick;
         private uint lastServerProcessedTick;
         private uint lastReconciledTick;
@@ -213,17 +220,47 @@ namespace SchoolEscape.Multiplayer
         [Rpc(SendTo.Server, InvokePermission = RpcInvokePermission.Owner, Delivery = RpcDelivery.Unreliable)]
         private void SubmitInputRpc(uint tick, Vector2 input, bool interactHeld)
         {
-            serverInteractHeld = interactHeld;
-            if (tick <= lastServerProcessedTick) return;
+            SchoolEscapeNetworkBootstrap bootstrap = SchoolEscapeNetworkBootstrap.Instance;
+            if (!IsFinite(input) || input.sqrMagnitude > MaximumInputMagnitude * MaximumInputMagnitude)
+            {
+                bootstrap?.ReportSecurityViolation(OwnerClientId, true,
+                    $"input imposible tick={tick}, magnitud={input.magnitude:0.00}", true);
+                return;
+            }
+            if (tick <= lastServerProcessedTick)
+            {
+                bootstrap?.ReportSecurityViolation(OwnerClientId, true,
+                    $"tick repetido/atrasado {tick} <= {lastServerProcessedTick}", false);
+                return;
+            }
 
-            Vector2 clampedInput = Vector2.ClampMagnitude(input, 1f);
             uint missingTicks = tick - lastServerProcessedTick;
+            if (missingTicks > MaximumAcceptedTickAdvance)
+            {
+                bootstrap?.ReportSecurityViolation(OwnerClientId, true,
+                    $"tick futuro {tick}; salto solicitado={missingTicks}, máximo={MaximumAcceptedTickAdvance}", true);
+                return;
+            }
+
+            serverInteractHeld = interactHeld;
+            Vector2 clampedInput = Vector2.ClampMagnitude(input, 1f);
             int simulatedTicks = missingTicks > MaximumServerCatchUpTicks
                 ? MaximumServerCatchUpTicks
                 : (int)missingTicks;
+            Vector3 positionBeforeSimulation = ally.transform.position;
             for (int index = 0; index < simulatedTicks; index++)
             {
                 SimulateMovement(clampedInput);
+            }
+
+            float maximumDisplacement = Speed * TickDelta * simulatedTicks + .05f;
+            float displacement = Vector3.Distance(positionBeforeSimulation, ally.transform.position);
+            if (displacement > maximumDisplacement)
+            {
+                ally.SetNetworkPosition(positionBeforeSimulation);
+                bootstrap?.ReportSecurityViolation(OwnerClientId, true,
+                    $"desplazamiento imposible {displacement:0.000} m > {maximumDisplacement:0.000} m", true);
+                return;
             }
             lastServerProcessedTick = tick;
 
@@ -319,18 +356,70 @@ namespace SchoolEscape.Multiplayer
         [Rpc(SendTo.Server, InvokePermission = RpcInvokePermission.Owner)]
         private void UseBandageRpc()
         {
-            if (session != null && ally != null) session.UseBandageFor(ally);
+            SchoolEscapeNetworkBootstrap bootstrap = SchoolEscapeNetworkBootstrap.Instance;
+            if (session == null || ally == null || !ally.CanAct || session.Bandages <= 0 || ally.Health >= 3)
+            {
+                bootstrap?.ReportSecurityViolation(OwnerClientId, false,
+                    "venda rechazada por estado, inventario o vida", false);
+                return;
+            }
+            if (Time.unscaledTime < nextBandageTime)
+            {
+                bootstrap?.ReportSecurityViolation(OwnerClientId, false,
+                    "venda solicitada antes del cooldown del servidor", true);
+                return;
+            }
+
+            nextBandageTime = Time.unscaledTime + BandageCooldown;
+            session.UseBandageFor(ally);
         }
 
         [Rpc(SendTo.Server, InvokePermission = RpcInvokePermission.Owner)]
         private void UseFlashRpc(Vector3 requestedDirection, double observedServerTime)
         {
-            if (Time.time < nextFlashTime || session == null || ally == null || ally.IsDown || ally.IsCaptive) return;
-            nextFlashTime = Time.time + .25f;
             SchoolEscapeNetworkBootstrap bootstrap = SchoolEscapeNetworkBootstrap.Instance;
             if (bootstrap == null) return;
-            session.FireCompensatedFlashFor(ally, requestedDirection, bootstrap.RewindHistory, observedServerTime, NetworkManager.ServerTime.Time);
+            if (!IsFinite(requestedDirection) || requestedDirection.sqrMagnitude > MaximumInputMagnitude * MaximumInputMagnitude)
+            {
+                bootstrap.ReportSecurityViolation(OwnerClientId, false,
+                    "flash rechazado por dirección imposible", true);
+                return;
+            }
+            if (session == null || ally == null || !ally.CanAct)
+            {
+                bootstrap.ReportSecurityViolation(OwnerClientId, false,
+                    "flash rechazado por estado del jugador", false);
+                return;
+            }
+            if (Time.unscaledTime < nextFlashTime)
+            {
+                bootstrap.ReportSecurityViolation(OwnerClientId, false,
+                    "flash solicitado antes del cooldown del servidor", true);
+                return;
+            }
+
+            double serverTime = NetworkManager.ServerTime.Time;
+            double requestAge = serverTime - observedServerTime;
+            if (double.IsNaN(observedServerTime) || double.IsInfinity(observedServerTime) ||
+                requestAge < -FlashFutureToleranceSeconds || requestAge > MaximumFlashRewindSeconds)
+            {
+                bootstrap.ReportSecurityViolation(OwnerClientId, false,
+                    $"flash rechazado por tiempo inválido ({requestAge * 1000d:0} ms)", true);
+                return;
+            }
+
+            nextFlashTime = Time.unscaledTime + FlashCooldown;
+            session.FireCompensatedFlashFor(ally, requestedDirection, bootstrap.RewindHistory, observedServerTime, serverTime);
         }
+
+        private static bool IsFinite(Vector2 value) =>
+            !float.IsNaN(value.x) && !float.IsInfinity(value.x) &&
+            !float.IsNaN(value.y) && !float.IsInfinity(value.y);
+
+        private static bool IsFinite(Vector3 value) =>
+            !float.IsNaN(value.x) && !float.IsInfinity(value.x) &&
+            !float.IsNaN(value.y) && !float.IsInfinity(value.y) &&
+            !float.IsNaN(value.z) && !float.IsInfinity(value.z);
 
         private void SendFlashRequest(Vector3 requestedDirection)
         {

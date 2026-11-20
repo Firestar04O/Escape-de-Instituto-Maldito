@@ -23,6 +23,8 @@ namespace SchoolEscape.Multiplayer
         private const string ClientAllyResource = "Multiplayer/NetworkClientAlly";
         private const string EnemySnapshotMessage = "SchoolEscape.EnemySnapshot";
         private const float EnemySnapshotInterval = 1f / 15f;
+        private const int SecurityKickThreshold = 6;
+        private const double SecurityStrikeWindowSeconds = 10d;
 
         private SchoolEscapePrototype session;
         private NetworkManager manager;
@@ -37,6 +39,8 @@ namespace SchoolEscape.Multiplayer
         private bool enemyHandlerRegistered;
         private readonly List<EnemyVisualProxy> enemyVisuals = new List<EnemyVisualProxy>();
         private readonly ServerRewindHistory rewindHistory = new ServerRewindHistory();
+        private int securityStrikes;
+        private double securityWindowStartedAt = -1d;
 
         public int RemoteEnemyCount => enemyVisuals.Count;
         public int RemoteNormalEnemyCount { get; private set; }
@@ -44,6 +48,11 @@ namespace SchoolEscape.Multiplayer
         public double LatestEnemySnapshotServerTime { get; private set; }
         public int LatestEnemySnapshotServerTick { get; private set; }
         public ServerRewindHistory RewindHistory => rewindHistory;
+        public int RejectedMovementCount { get; private set; }
+        public int RejectedActionCount { get; private set; }
+        public int SecurityStrikeCount => securityStrikes;
+        public bool SecurityClientKicked { get; private set; }
+        public string LastSecurityEvent { get; private set; } = string.Empty;
         public double ObservedServerTime => LatestEnemySnapshotServerTime > 0d
             ? LatestEnemySnapshotServerTime
             : manager != null ? manager.ServerTime.Time : 0d;
@@ -158,6 +167,7 @@ namespace SchoolEscape.Multiplayer
             }
 
             startInProgress = true;
+            ResetSecurityAudit();
             transport.SetConnectionData("127.0.0.1", activePort, "0.0.0.0");
             Status = $"Iniciando host en puerto {activePort}…";
             bool started;
@@ -180,6 +190,50 @@ namespace SchoolEscape.Multiplayer
             Status = $"Host activo · puerto {activePort}";
             SpawnHostPlayer();
             return true;
+        }
+
+        public bool ReportSecurityViolation(ulong clientId, bool movement, string detail, bool countsAsStrike)
+        {
+            if (manager == null || !manager.IsServer || clientId == NetworkManager.ServerClientId) return false;
+
+            if (movement) RejectedMovementCount++;
+            else RejectedActionCount++;
+            LastSecurityEvent = detail ?? "Solicitud inválida";
+
+            double now = manager.ServerTime.Time;
+            if (countsAsStrike)
+            {
+                if (securityWindowStartedAt < 0d || now - securityWindowStartedAt > SecurityStrikeWindowSeconds)
+                {
+                    securityWindowStartedAt = now;
+                    securityStrikes = 0;
+                }
+                securityStrikes++;
+            }
+
+            Debug.LogWarning($"[Security] Cliente {clientId}: {LastSecurityEvent} " +
+                             $"(movimiento={RejectedMovementCount}, acciones={RejectedActionCount}, " +
+                             $"strikes={securityStrikes}/{SecurityKickThreshold})");
+
+            if (!countsAsStrike || securityStrikes < SecurityKickThreshold ||
+                !manager.ConnectedClientsIds.Contains(clientId)) return false;
+
+            SecurityClientKicked = true;
+            LastSecurityEvent = $"Expulsado: {LastSecurityEvent}";
+            Debug.LogWarning($"[Security] Cliente {clientId} expulsado por {securityStrikes} infracciones en " +
+                             $"{SecurityStrikeWindowSeconds:0} s.");
+            manager.DisconnectClient(clientId, "Expulsado por solicitudes inválidas repetidas.");
+            return true;
+        }
+
+        private void ResetSecurityAudit()
+        {
+            RejectedMovementCount = 0;
+            RejectedActionCount = 0;
+            securityStrikes = 0;
+            securityWindowStartedAt = -1d;
+            SecurityClientKicked = false;
+            LastSecurityEvent = string.Empty;
         }
 
         public bool StartClient(string address)

@@ -75,7 +75,7 @@ La corrección inicial grande registrada al aparecer el objeto corresponde a ali
 
 ## Verificación pendiente
 
-- Validación anti-cheat y AoI pertenecen a las semanas 12–13 y se implementarán por separado.
+- El Área de Interés y sus métricas con Network Profiler pertenecen a la Semana 13.
 
 ## Compensación de lag del flash — Semana 11
 
@@ -106,3 +106,42 @@ Primer intento registrado: con `300 ms RTT` y cap inicial de `500 ms`, la acció
 Punto de retorno anterior a Semana 11: commit `b47b779`.
 
 Punto de retorno anterior a Semana 10: commit `69bf3754cdb2627489893d778890795c50404b49`.
+
+## Seguridad y validación autoritativa — Semana 12
+
+### Reglas implementadas
+
+- Los RPC del cliente expresan intenciones y requieren ser el propietario del objeto (`RpcInvokePermission.Owner`). El cliente nunca envía vida, inventario, loot, impactos ni resultado de partida.
+- El servidor rechaza componentes `NaN`/infinitos, inputs con magnitud mayor a `1.05`, ticks repetidos o atrasados y saltos futuros mayores a 12 ticks.
+- Cada tick aceptado aplica como máximo `5.8 m/s / 30 Hz`; después de simular, el servidor vuelve a comprobar que el desplazamiento no exceda ese presupuesto más `0.05 m` de tolerancia.
+- Vendas y flash validan en el servidor estado del actor, inventario, vida, cooldown y, para el flash, dirección y antigüedad del estado observado.
+- Los ticks repetidos y acciones imposibles por estado se registran pero no expulsan por sí solos, porque pueden provenir de red no fiable o de una pulsación legítima. Datos no finitos, magnitudes imposibles, ticks futuros y spam antes del cooldown sí suman una infracción.
+- Seis infracciones dentro de una ventana de 10 segundos desconectan al cliente remoto mediante `NetworkManager.DisconnectClient`. El host es el servidor confiable del modelo listen server.
+
+### Matriz de autoridad auditada
+
+| Sistema | Intención permitida al cliente | Validación/resultado del servidor | Réplica al cliente |
+|---|---|---|---|
+| Movimiento | Tick, vector 2D y botón de interacción | Orden y salto de tick, finitud, magnitud, velocidad y colisiones | Posición oficial y último tick procesado |
+| Interacción | Botón mantenido | Busca el objeto más cercano a `2.8 m`, acumula duración y ejecuta `Complete` | Progreso y mensaje personal |
+| Venda | Solicitar uso | Estado, vida, inventario y cooldown; descuenta y cura | Vida e inventario oficiales |
+| Flash | Dirección y tiempo del snapshot observado | Propiedad, estado, cooldown, cap temporal, rewind, alcance y cono; descuenta pila y aplica impactos | Inventario, mensajes y estado de enemigos |
+| Daño/captura/rescate | Ningún resultado | IA y lógica de partida modifican vida y cautiverio | Estado oficial del actor |
+| Loot | Interactuar con el contenedor | El servidor decide y modifica el inventario | Inventario y anuncio personal |
+| Victoria/derrota | Llegar físicamente a una salida | El servidor cuenta participantes resueltos y fija el resultado | Resultado, tiempo y panel final |
+| Director/enemigos | Ninguno | El host crea, mueve, limita y elimina enemigos | Snapshots visuales a 15 Hz |
+
+### Prueba con cliente modificado
+
+Prueba MPPM del 20 de noviembre de 2026 con Editor principal como host y `Player 2` como cliente. Desde el cliente se invocaron los mismos RPC que usaría un binario alterado.
+
+| Intento | Antes de Semana 12 | Después de Semana 12 (medido) |
+|---|---|---|
+| `tick=100000`, input `(99,99)` | El vector se normalizaba y se simulaban hasta 8 ticks; no había auditoría ni sanción | Rechazado antes de simular: magnitud `140.01`; posición oficial permaneció `(30.033, 1.000, -36.602)` |
+| Tick repetido/atrasado | Se ignoraba silenciosamente | Se rechaza y registra como evento de red no sancionable |
+| Dirección de flash con `NaN` | No existía validación explícita de finitud | Rechazada antes de consumir pila o evaluar impactos |
+| Ráfaga de solicitudes inválidas | No había contador ni expulsión | `1` movimiento + `5` acciones = `6/6` infracciones; `kicked=True`, `remote=False` y el `NetworkObject` del cliente fue despawneado |
+
+Contadores observados al finalizar: `RejectedMovementCount=1`, `RejectedActionCount=5`, `SecurityStrikeCount=6`. La consola del host emitió entradas `[Security]` por cada rechazo y por la expulsión.
+
+Punto de retorno anterior a Semana 12: commit `6795b3e`.
