@@ -19,7 +19,7 @@ namespace SchoolEscape.Multiplayer
         private const float VisualCorrectionSharpness = 14f;
         private const float FlashAimThreshold = 48f;
         private const float FlashCancelRadius = 32f;
-        private const uint MaximumAcceptedTickAdvance = 12;
+        private const uint ServerTickTolerance = 12;
         private const float MaximumInputMagnitude = 1.05f;
         private const float BandageCooldown = .5f;
         private const float FlashCooldown = .25f;
@@ -71,6 +71,7 @@ namespace SchoolEscape.Multiplayer
         private float nextBandageTime;
         private uint localInputTick;
         private uint lastServerProcessedTick;
+        private int serverTickAtSpawn;
         private uint lastReconciledTick;
         private int correctionCount;
         private float lastCorrectionDistance;
@@ -87,6 +88,9 @@ namespace SchoolEscape.Multiplayer
         private Vector3 flashAimDirection = Vector3.forward;
         private GameObject aimIndicator;
         private Transform predictedPresentation;
+        private Vector3 movementPresentationOffset;
+        private Vector3 visualCorrectionOffset;
+        private float lastPresentationTickTime;
         private Renderer rootRenderer;
         private Renderer predictedRenderer;
         private NetworkTransform networkTransform;
@@ -124,14 +128,17 @@ namespace SchoolEscape.Multiplayer
             ally.enabled = false;
             networkTransform = GetComponent<NetworkTransform>();
             if (IsServer)
+            {
+                serverTickAtSpawn = NetworkManager.ServerTime.Tick;
                 syncedAuthoritativePosition.Value = transform.position;
-            if (IsOwner && IsClient)
+            }
+            if (IsOwner && IsClient && !IsServer)
             {
                 LocalOwner = this;
                 if (!IsServer && networkTransform != null) networkTransform.enabled = false;
                 CreatePredictedPresentation();
             }
-            if (session != null) session.AttachNetworkClientAlly(ally, IsOwner);
+            if (session != null) session.AttachNetworkClientAlly(ally, IsServer, IsOwner && !IsServer);
             if (predictedPresentation != null) session?.SetNetworkCameraTarget(predictedPresentation);
             if (NetworkManager != null)
                 NetworkManager.NetworkTickSystem.Tick += OnNetworkTick;
@@ -188,11 +195,15 @@ namespace SchoolEscape.Multiplayer
         private void OnNetworkTick()
         {
             if (!IsOwner || !IsClient || ally == null) return;
+            if (SchoolEscapeNetworkBootstrap.Instance?.GameplayActive != true) return;
 
             bool keyboardInteract = Keyboard.current != null && Keyboard.current.eKey.isPressed;
             Vector2 input = Vector2.ClampMagnitude(ReadMove(), 1f);
             uint tick = ++localInputTick;
+            Vector3 previousPosition = ally.transform.position;
             SimulateMovement(input);
+            movementPresentationOffset = previousPosition - ally.transform.position;
+            lastPresentationTickTime = Time.unscaledTime;
 
             int slot = (int)(tick % InputHistorySize);
             inputHistory[slot] = new PredictedInput
@@ -234,19 +245,21 @@ namespace SchoolEscape.Multiplayer
                 return;
             }
 
-            uint missingTicks = tick - lastServerProcessedTick;
-            if (missingTicks > MaximumAcceptedTickAdvance)
+            uint elapsedServerTicks = unchecked((uint)(NetworkManager.ServerTime.Tick - serverTickAtSpawn));
+            if (tick > (ulong)elapsedServerTicks + ServerTickTolerance)
             {
                 bootstrap?.ReportSecurityViolation(OwnerClientId, true,
-                    $"tick futuro {tick}; salto solicitado={missingTicks}, máximo={MaximumAcceptedTickAdvance}", true);
+                    $"tick futuro {tick}; ticks transcurridos en el servidor={elapsedServerTicks}", true);
                 return;
             }
 
             serverInteractHeld = interactHeld;
             Vector2 clampedInput = Vector2.ClampMagnitude(input, 1f);
-            int simulatedTicks = missingTicks > MaximumServerCatchUpTicks
-                ? MaximumServerCatchUpTicks
-                : (int)missingTicks;
+            uint missingTicks = tick - lastServerProcessedTick;
+            // After a long gap, accept fresh input without replaying the lost movement.
+            int simulatedTicks = missingTicks > ServerTickTolerance
+                ? 1
+                : Mathf.Min((int)missingTicks, MaximumServerCatchUpTicks);
             Vector3 positionBeforeSimulation = ally.transform.position;
             for (int index = 0; index < simulatedTicks; index++)
             {
@@ -318,7 +331,8 @@ namespace SchoolEscape.Multiplayer
                 inputHistory[slot] = pending;
             }
 
-            if (predictedPresentation != null) predictedPresentation.position = oldVisualPosition;
+            if (predictedPresentation != null)
+                visualCorrectionOffset = oldVisualPosition - ally.transform.position - GetMovementPresentationOffset();
         }
 
         private void CreatePredictedPresentation()
@@ -350,7 +364,14 @@ namespace SchoolEscape.Multiplayer
         {
             if (predictedPresentation == null) return;
             float blend = 1f - Mathf.Exp(-VisualCorrectionSharpness * Time.unscaledDeltaTime);
-            predictedPresentation.localPosition = Vector3.Lerp(predictedPresentation.localPosition, Vector3.zero, blend);
+            visualCorrectionOffset = Vector3.Lerp(visualCorrectionOffset, Vector3.zero, blend);
+            predictedPresentation.position = ally.transform.position + GetMovementPresentationOffset() + visualCorrectionOffset;
+        }
+
+        private Vector3 GetMovementPresentationOffset()
+        {
+            float progress = Mathf.Clamp01((Time.unscaledTime - lastPresentationTickTime) / TickDelta);
+            return movementPresentationOffset * (1f - progress);
         }
 
         [Rpc(SendTo.Server, InvokePermission = RpcInvokePermission.Owner)]

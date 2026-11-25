@@ -1506,20 +1506,10 @@ public class SchoolEscapePrototype : MonoBehaviour
         if (localAuthority) networkCameraTarget = Player.transform;
     }
 
-    public void AttachNetworkClientAlly(PrototypeAlly networkAlly, bool localAuthority)
+    public void AttachNetworkClientAlly(PrototypeAlly networkAlly, bool serverAuthority, bool localAuthority)
     {
         if (networkAlly == null) return;
-        if (!localAuthority && !IsNetworkReplica)
-        {
-            PrototypeAlly previousHostAlly = Ally;
-            Ally = networkAlly;
-            Ally.Initialize(this);
-            Ally.enabled = false;
-            if (previousHostAlly != null && previousHostAlly != networkAlly) Destroy(previousHostAlly.gameObject);
-            return;
-        }
-
-        EnterNetworkReplicaMode();
+        if (!serverAuthority) EnterNetworkReplicaMode();
         PrototypeAlly previous = Ally;
         Ally = networkAlly;
         Ally.Initialize(this);

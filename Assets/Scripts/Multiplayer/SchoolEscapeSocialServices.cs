@@ -119,12 +119,19 @@ namespace SchoolEscape.Multiplayer
             }
             if (!IsVoiceJoined || Time.unscaledTime < nextPositionUpdate) return;
             nextPositionUpdate = Time.unscaledTime + PositionUpdateInterval;
+            IVivoxService vivox = VivoxService.Instance;
+            if (vivox == null || !vivox.IsLoggedIn || !vivox.ActiveChannels.ContainsKey(ChannelName))
+            {
+                OnVoiceChannelLeft(ChannelName);
+                return;
+            }
+
             if (positionAnchor == null) positionAnchor = FindLocalVoiceAnchor();
             if (positionAnchor == null) return;
 
             try
             {
-                VivoxService.Instance.Set3DPosition(positionAnchor, ChannelName);
+                vivox.Set3DPosition(positionAnchor, ChannelName);
             }
             catch (Exception exception)
             {
@@ -233,8 +240,10 @@ namespace SchoolEscape.Multiplayer
             if (generation != sessionGeneration) return;
             VivoxService.Instance.ParticipantAddedToChannel -= OnParticipantChanged;
             VivoxService.Instance.ParticipantRemovedFromChannel -= OnParticipantChanged;
+            VivoxService.Instance.ChannelLeft -= OnVoiceChannelLeft;
             VivoxService.Instance.ParticipantAddedToChannel += OnParticipantChanged;
             VivoxService.Instance.ParticipantRemovedFromChannel += OnParticipantChanged;
+            VivoxService.Instance.ChannelLeft += OnVoiceChannelLeft;
             string requestedChannel = BuildChannelName(sessionId);
             VoiceStatus = "Voz: conectando…";
 
@@ -426,6 +435,17 @@ namespace SchoolEscape.Multiplayer
         }
 
         private void OnParticipantChanged(VivoxParticipant _) { RefreshParticipants(); NotifyChanged(); }
+
+        private void OnVoiceChannelLeft(string channelName)
+        {
+            if (!IsVoiceJoined || !string.Equals(channelName, ChannelName, StringComparison.Ordinal)) return;
+            IsVoiceJoined = false;
+            ChannelName = string.Empty;
+            positionAnchor = null;
+            participants.Clear();
+            VoiceStatus = "Voz: canal desconectado";
+            NotifyChanged();
+        }
         private void OnRelationshipAdded(IRelationshipAddedEvent _) { RefreshFriends(); NotifyChanged(); }
         private void OnRelationshipDeleted(IRelationshipDeletedEvent _) { RefreshFriends(); NotifyChanged(); }
         private void OnPresenceUpdated(IPresenceUpdatedEvent _) { RefreshFriends(); NotifyChanged(); }
@@ -528,6 +548,7 @@ namespace SchoolEscape.Multiplayer
             {
                 VivoxService.Instance.ParticipantAddedToChannel -= OnParticipantChanged;
                 VivoxService.Instance.ParticipantRemovedFromChannel -= OnParticipantChanged;
+                VivoxService.Instance.ChannelLeft -= OnVoiceChannelLeft;
                 FriendsService.Instance.RelationshipAdded -= OnRelationshipAdded;
                 FriendsService.Instance.RelationshipDeleted -= OnRelationshipDeleted;
                 FriendsService.Instance.PresenceUpdated -= OnPresenceUpdated;

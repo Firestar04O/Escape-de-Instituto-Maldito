@@ -4,6 +4,7 @@ using System.Threading;
 using SchoolEscape.Multiplayer;
 using UnityEngine;
 using UnityEngine.EventSystems;
+using UnityEngine.InputSystem.UI;
 using UnityEngine.UI;
 
 namespace SchoolEscape.UI
@@ -59,6 +60,9 @@ namespace SchoolEscape.UI
         {
             if (transform.Find("03 - Lobby") != null) BindPrefabUi();
             else BuildUi();
+            lobbyPlayers.raycastTarget = false;
+            lobbyStatus.raycastTarget = false;
+            readyLabel.raycastTarget = false;
             confirmedPlayerName = SchoolEscapeNetworkBootstrap.LoadSavedPlayerName();
             nameInput.text = confirmedPlayerName;
             BuildPlayCenter();
@@ -86,17 +90,26 @@ namespace SchoolEscape.UI
                 if (session != null && session.MobileHud != null) session.MobileHud.gameObject.SetActive(true);
                 Time.timeScale = 1f;
             }
-            else if (bootstrap != null && previousGameplayActive && !bootstrap.GameplayActive && bootstrap.IsOnlineSession)
+            else if (bootstrap != null && previousGameplayActive && !bootstrap.GameplayActive)
             {
                 resultShown = false;
                 victoryReturnScheduled = false;
-                OpenPanel(lobbyPanel);
+                if (bootstrap.IsOnlineSession) OpenPanel(lobbyPanel);
+                else
+                {
+                    OpenPanel(playPanel);
+                    playStatus.text = bootstrap.Status;
+                }
                 Time.timeScale = 0f;
             }
             previousGameplayActive = bootstrap != null && bootstrap.GameplayActive;
 
             if (bootstrap != null && !bootstrap.IsOnlineSession && !bootstrap.IsListening &&
-                !soloPlaying && (lobbyPanel.activeSelf || resultPanel.activeSelf)) OpenPanel(playPanel);
+                !soloPlaying && (lobbyPanel.activeSelf || resultPanel.activeSelf))
+            {
+                OpenPanel(playPanel);
+                playStatus.text = bootstrap.Status;
+            }
             if (session == null || resultShown || bootstrap == null || !bootstrap.GameplayActive) return;
             PrototypeMatchResult result = session.DisplayMatchResult;
             if (result != PrototypeMatchResult.InProgress) ShowResult(result, bootstrap);
@@ -390,19 +403,21 @@ namespace SchoolEscape.UI
             if (copy != null) copy.gameObject.SetActive(bootstrap.ShowsRoomCode);
             lobbyPlayers.text = $"{bootstrap.HostPlayerName}  {(bootstrap.HostReady ? "✓ LISTO" : "· ESPERANDO")}\n" +
                 (bootstrap.HasRemoteClient || !string.IsNullOrEmpty(bootstrap.ClientPlayerName) ? $"{bootstrap.ClientPlayerName}  {(bootstrap.ClientReady ? "✓ LISTO" : "· ESPERANDO")}" : "Esperando jugador 2…");
-            if (bootstrap.CountdownActive)
-            {
-                lobbyStatus.text = $"LA PARTIDA COMIENZA EN {bootstrap.CountdownSeconds}";
-                nameInput.interactable = false; readyLabel.text = "CANCELAR";
-                if (nameInput.isFocused) { nameInput.DeactivateInputField(); nameInput.text = confirmedPlayerName; }
-            }
-            else
-            {
-                lobbyStatus.text = bootstrap.HasRemoteClient || !bootstrap.IsHost
+            lobbyStatus.text = bootstrap.MatchStartInProgress ? "Sincronizando jugadores…"
+                : bootstrap.IsReadyVotePending ? "Confirmando con el anfitrión…"
+                : !bootstrap.CanSetReady ? (bootstrap.IsListening ? "Conectando al lobby…" : bootstrap.Status)
+                : !string.IsNullOrEmpty(bootstrap.ReadyVoteError) ? bootstrap.ReadyVoteError
+                : !string.IsNullOrEmpty(bootstrap.MatchStartError) ? bootstrap.MatchStartError
+                : bootstrap.HasRemoteClient || !bootstrap.IsHost
                     ? "Ambos jugadores deben estar listos" : "Esperando al segundo jugador…";
-                nameInput.interactable = true; readyLabel.text = bootstrap.LocalReady ? "NO ESTOY LISTO" : "LISTO";
+            readyButton.interactable = bootstrap.CanSetReady;
+            nameInput.interactable = bootstrap.CanSetReady;
+            readyLabel.text = bootstrap.LocalReady ? "NO ESTOY LISTO" : "LISTO";
+            if (bootstrap.MatchStartInProgress && nameInput.isFocused)
+            {
+                nameInput.DeactivateInputField();
+                nameInput.text = confirmedPlayerName;
             }
-            if (resultPanel.activeSelf && bootstrap.CountdownActive) resultStatus.text = $"Reiniciando en {bootstrap.CountdownSeconds}…";
         }
 
         private void ShowResult(PrototypeMatchResult result, SchoolEscapeNetworkBootstrap bootstrap)
@@ -450,8 +465,7 @@ namespace SchoolEscape.UI
         private void ToggleReady()
         {
             SchoolEscapeNetworkBootstrap bootstrap = SchoolEscapeNetworkBootstrap.Instance;
-            if (bootstrap == null) return;
-            ConfirmPlayerName(nameInput.text);
+            if (bootstrap == null || !bootstrap.CanSetReady) return;
             bootstrap.SetLocalReady(!bootstrap.LocalReady);
         }
 
@@ -460,7 +474,7 @@ namespace SchoolEscape.UI
         private void ConfirmPlayerName(string value)
         {
             SchoolEscapeNetworkBootstrap bootstrap = SchoolEscapeNetworkBootstrap.Instance;
-            if (bootstrap != null && bootstrap.CountdownActive) { nameInput.text = confirmedPlayerName; return; }
+            if (bootstrap != null && bootstrap.MatchStartInProgress) { nameInput.text = confirmedPlayerName; return; }
             confirmedPlayerName = string.IsNullOrWhiteSpace(value) ? "Jugador" : value.Trim();
             if (confirmedPlayerName.Length > 18) confirmedPlayerName = confirmedPlayerName.Substring(0, 18);
             nameInput.text = confirmedPlayerName; bootstrap?.SetLocalPlayerName(confirmedPlayerName);
@@ -555,7 +569,7 @@ namespace SchoolEscape.UI
         private static void EnsureEventSystem()
         {
             if (FindFirstObjectByType<EventSystem>() != null) return;
-            new GameObject("EventSystem", typeof(EventSystem), typeof(StandaloneInputModule)).transform.SetAsFirstSibling();
+            new GameObject("EventSystem", typeof(EventSystem), typeof(InputSystemUIInputModule)).transform.SetAsFirstSibling();
         }
     }
 }
