@@ -3,6 +3,7 @@ using System.Linq;
 using System.Net.NetworkInformation;
 using System.Collections.Generic;
 using System.Collections;
+using System.Threading;
 using System.Threading.Tasks;
 using Unity.Collections;
 using Unity.Netcode;
@@ -24,11 +25,17 @@ namespace SchoolEscape.Multiplayer
         public bool IsListening => manager != null && manager.IsListening;
         public bool HasRemoteClient => manager != null && manager.IsServer && remoteClientId.HasValue;
         public bool IsOnlineSession => onlineSession != null;
+        public bool IsConnecting => startInProgress || leavingOnlineSession;
+        public bool IsFriendsRoom { get; private set; }
+        public bool ShowsRoomCode { get; private set; }
+        public bool CanInvite => IsHost && IsFriendsRoom && IsOnlineSession && !HasRemoteClient &&
+            !GameplayActive && !CountdownActive && !matchStartInProgress && !IsConnecting;
         public bool IsHost => manager != null && manager.IsHost;
         public bool GameplayActive { get; private set; }
         public bool CountdownActive => countdownEndsAt > 0f;
         public int CountdownSeconds => CountdownActive ? Mathf.Max(1, Mathf.CeilToInt(countdownEndsAt - Time.unscaledTime)) : 0;
         public string SessionCode => onlineSession != null ? onlineSession.Code : string.Empty;
+        public string SessionId => onlineSession != null ? onlineSession.Id : string.Empty;
         public string LocalPlayerName { get; private set; } = "Jugador";
         public string HostPlayerName { get; private set; } = "Host";
         public string ClientPlayerName { get; private set; } = string.Empty;
@@ -74,6 +81,7 @@ namespace SchoolEscape.Multiplayer
         private bool countdownStartsMatch = true;
         private bool matchStartInProgress;
         private bool leavingOnlineSession;
+        private static Task servicesInitialization;
         private const string PlayerNameKey = "school_escape_player_name";
 
         public int RemoteEnemyCount => enemyVisuals.Count;
@@ -170,6 +178,7 @@ namespace SchoolEscape.Multiplayer
             manager.ConnectionApprovalCallback = ApproveConnection;
             manager.OnClientConnectedCallback += OnClientConnected;
             manager.OnClientDisconnectCallback += OnClientDisconnected;
+            manager.OnClientStopped += OnClientStopped;
             manager.OnTransportFailure += OnTransportFailure;
         }
 
@@ -199,9 +208,9 @@ namespace SchoolEscape.Multiplayer
             }
         }
 
-        public async Task<bool> CreateOnlineSessionAsync(string playerName)
+        public async Task<bool> CreateOnlineSessionAsync(string playerName, bool friendsRoom = false)
         {
-            if (!ValidatePrefabs() || startInProgress) return false;
+            if (IsConnecting || IsOnlineSession || IsListening || !ValidatePrefabs()) return false;
             startInProgress = true;
             Status = "Conectando con Unity Gaming Services…";
             try
@@ -220,11 +229,14 @@ namespace SchoolEscape.Multiplayer
                 });
                 hostOnlineSession = await MultiplayerService.Instance.CreateSessionAsync(options);
                 onlineSession = hostOnlineSession;
+                IsFriendsRoom = friendsRoom;
+                ShowsRoomCode = !friendsRoom;
                 HookOnlineSessionEvents();
                 HostPlayerName = LocalPlayerName;
                 Status = $"Sala creada · código {onlineSession.Code}";
                 RegisterLobbyHandlers();
                 BroadcastLobbySnapshot();
+                SchoolEscapeSocialServices.Ensure().EnterSession(SessionId, SessionCode, LocalPlayerName);
                 return true;
             }
             catch (Exception exception)
@@ -242,9 +254,9 @@ namespace SchoolEscape.Multiplayer
             }
         }
 
-        public async Task<bool> JoinOnlineSessionAsync(string code, string playerName)
+        public async Task<bool> JoinOnlineSessionAsync(string code, string playerName, string expectedSessionId = null)
         {
-            if (!ValidatePrefabs() || startInProgress) return false;
+            if (IsConnecting || IsOnlineSession || IsListening || !ValidatePrefabs()) return false;
             if (string.IsNullOrWhiteSpace(code))
             {
                 Status = "Escribe el código de la sala.";
@@ -265,10 +277,19 @@ namespace SchoolEscape.Multiplayer
                 onlineSession = await MultiplayerService.Instance.JoinSessionByCodeAsync(
                     code.Trim().ToUpperInvariant(), joinOptions);
                 hostOnlineSession = null;
+                if (expectedSessionId != null && onlineSession.Id != expectedSessionId)
+                {
+                    await LeaveOnlineSessionAsync();
+                    Status = "La invitación ya no corresponde a esta sala.";
+                    return false;
+                }
+                IsFriendsRoom = expectedSessionId != null;
+                ShowsRoomCode = !IsFriendsRoom;
                 HookOnlineSessionEvents();
                 Status = "Entrando al lobby…";
                 RegisterLobbyHandlers();
                 SendLobbyCommand(0, LocalPlayerName);
+                SchoolEscapeSocialServices.Ensure().EnterSession(SessionId, SessionCode, LocalPlayerName);
                 return true;
             }
             catch (Exception exception)
@@ -285,16 +306,93 @@ namespace SchoolEscape.Multiplayer
             }
         }
 
-        private static async Task EnsureServicesAsync()
+        public async Task<bool> FindQuickMatchAsync(string playerName, CancellationToken cancellationToken)
         {
+            if (IsConnecting || IsOnlineSession || IsListening || !ValidatePrefabs()) return false;
+            startInProgress = true;
+            Status = "Buscando compañero…";
+            try
+            {
+                await EnsureServicesAsync();
+                cancellationToken.ThrowIfCancellationRequested();
+                SetLocalPlayerName(playerName, false);
+                transport.UseWebSockets = true;
+                const string quickMode = "escape-quick-coop-v1";
+                var search = new QuickJoinOptions
+                {
+                    CreateSession = true,
+                    Timeout = TimeSpan.FromSeconds(UnityEngine.Random.Range(1f, 4f)),
+                    Filters = new List<FilterOption>
+                    {
+                        new FilterOption(FilterField.StringIndex1, quickMode, FilterOperation.Equal),
+                        new FilterOption(FilterField.AvailableSlots, "1", FilterOperation.GreaterOrEqual)
+                    }
+                };
+                var options = new SessionOptions
+                {
+                    Name = "Escape cooperativo",
+                    MaxPlayers = 2,
+                    SessionProperties = new Dictionary<string, SessionProperty>
+                    {
+                        { "mode", new SessionProperty(quickMode, VisibilityPropertyOptions.Public, PropertyIndex.String1) }
+                    }
+                }.WithRelayNetwork().WithNetworkOptions(new NetworkOptions { RelayProtocol = RelayProtocol.WSS });
+                onlineSession = await MultiplayerService.Instance.MatchmakeSessionAsync(search, options, cancellationToken);
+                hostOnlineSession = onlineSession.IsHost ? onlineSession.AsHost() : null;
+                if (cancellationToken.IsCancellationRequested)
+                {
+                    await LeaveOnlineSessionAsync();
+                    return false;
+                }
+                IsFriendsRoom = ShowsRoomCode = false;
+                HookOnlineSessionEvents();
+                RegisterLobbyHandlers();
+                if (IsHost)
+                {
+                    HostPlayerName = LocalPlayerName;
+                    BroadcastLobbySnapshot();
+                }
+                else SendLobbyCommand(0, LocalPlayerName);
+                Status = "Partida rápida · esperando compañero";
+                SchoolEscapeSocialServices.Ensure().EnterSession(SessionId, SessionCode, LocalPlayerName);
+                return true;
+            }
+            catch (OperationCanceledException)
+            {
+                SafeShutdown();
+                Status = "Búsqueda cancelada.";
+                return false;
+            }
+            catch (Exception exception)
+            {
+                SafeShutdown();
+                Status = FriendlyOnlineError("No se encontró compañero", exception);
+                return false;
+            }
+            finally { startInProgress = false; }
+        }
+
+        private static Task EnsureServicesAsync()
+        {
+            if (servicesInitialization == null || servicesInitialization.IsCompleted)
+                servicesInitialization = InitializeServicesAsync();
+            return servicesInitialization;
+        }
+
+        private static async Task InitializeServicesAsync()
+        {
+            string profile = BuildAuthenticationProfile();
             if (UnityServices.State == ServicesInitializationState.Uninitialized)
-                await UnityServices.InitializeAsync();
+                await UnityServices.InitializeAsync(new InitializationOptions().SetProfile(profile));
             if (!AuthenticationService.Instance.IsSignedIn)
             {
-                AuthenticationService.Instance.SwitchProfile(BuildAuthenticationProfile());
+                if (AuthenticationService.Instance.Profile != profile)
+                    AuthenticationService.Instance.SwitchProfile(profile);
                 await AuthenticationService.Instance.SignInAnonymouslyAsync();
             }
         }
+
+        public static Task EnsureServicesReadyAsync() => EnsureServicesAsync();
 
         private static string BuildAuthenticationProfile()
         {
@@ -311,6 +409,18 @@ namespace SchoolEscape.Multiplayer
         private static string GetMultiplayerInstanceName()
         {
             string[] arguments = Environment.GetCommandLineArgs();
+#if UNITY_EDITOR
+            // Virtual Players can share persistentDataPath and PlayerPrefs with the main editor.
+            // Use the clone's stable identity before considering its display name.
+            foreach (string argument in arguments)
+            {
+                const string prefix = "-vpId=";
+                if (argument.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) && argument.Length > prefix.Length)
+                    return "virtual-player:" + argument.Substring(prefix.Length);
+            }
+            if (Array.Exists(arguments, argument => string.Equals(argument, "--virtual-project-clone", StringComparison.OrdinalIgnoreCase)))
+                return "virtual-project:" + Application.dataPath;
+#endif
             for (int index = 0; index < arguments.Length - 1; index++)
             {
                 if (string.Equals(arguments[index], "-name", StringComparison.OrdinalIgnoreCase))
@@ -334,10 +444,20 @@ namespace SchoolEscape.Multiplayer
             onlineSession.PlayerHasLeft += OnOnlinePlayerLeft;
         }
 
+        private void UnhookOnlineSessionEvents()
+        {
+            if (onlineSession == null) return;
+            onlineSession.Deleted -= OnOnlineSessionEnded;
+            onlineSession.RemovedFromSession -= OnOnlineSessionEnded;
+            onlineSession.PlayerHasLeft -= OnOnlinePlayerLeft;
+        }
+
         private void OnOnlineSessionEnded()
         {
             if (leavingOnlineSession) return;
             Status = "La sala se cerró.";
+            SchoolEscapeSocialServices.Instance?.LeaveSession();
+            UnhookOnlineSessionEvents();
             onlineSession = null;
             hostOnlineSession = null;
             SafeShutdown();
@@ -410,10 +530,13 @@ namespace SchoolEscape.Multiplayer
             if (manager != null && manager.IsServer) ReturnEveryoneToLobby();
         }
 
-        public async void LeaveOnlineSession()
+        public void LeaveOnlineSession() => _ = LeaveOnlineSessionAsync();
+
+        public async Task LeaveOnlineSessionAsync()
         {
             if (leavingOnlineSession) return;
             leavingOnlineSession = true;
+            UnhookOnlineSessionEvents();
             try
             {
                 if (hostOnlineSession != null) await hostOnlineSession.DeleteAsync();
@@ -425,6 +548,7 @@ namespace SchoolEscape.Multiplayer
             }
             finally
             {
+                SchoolEscapeSocialServices.Instance?.LeaveSession();
                 onlineSession = null;
                 hostOnlineSession = null;
                 GameplayActive = false;
@@ -670,7 +794,9 @@ namespace SchoolEscape.Multiplayer
         private void EvaluateLobbyStart()
         {
             if (!manager.IsServer || GameplayActive || CountdownActive || matchStartInProgress) return;
-            bool canStart = HostReady && (!remoteClientId.HasValue || ClientReady);
+            bool canStart = HostReady && (IsOnlineSession
+                ? remoteClientId.HasValue && ClientReady
+                : !remoteClientId.HasValue || ClientReady);
             if (!canStart) return;
             StartCountdown(true);
         }
@@ -842,6 +968,7 @@ namespace SchoolEscape.Multiplayer
 
         private void SafeShutdown()
         {
+            SchoolEscapeSocialServices.Instance?.LeaveSession();
             startInProgress = false;
             UnregisterEnemySnapshotHandler();
             UnregisterLobbyHandlers();
@@ -869,11 +996,12 @@ namespace SchoolEscape.Multiplayer
 
         private void ApproveConnection(NetworkManager.ConnectionApprovalRequest request, NetworkManager.ConnectionApprovalResponse response)
         {
-            bool hasRoom = manager.ConnectedClientsIds.Count < 2;
+            bool acceptingPlayers = !IsOnlineSession || (!GameplayActive && !CountdownActive && !matchStartInProgress);
+            bool hasRoom = manager.ConnectedClientsIds.Count < 2 && acceptingPlayers;
             response.Approved = hasRoom;
             response.CreatePlayerObject = false;
             response.Pending = false;
-            response.Reason = hasRoom ? string.Empty : "La partida admite un máximo de 2 jugadores.";
+            response.Reason = hasRoom ? string.Empty : "La sala está llena o la partida ya empezó.";
         }
 
         private void OnClientConnected(ulong clientId)
@@ -1144,6 +1272,12 @@ namespace SchoolEscape.Multiplayer
             Status = $"Error de transporte en puerto {activePort}";
         }
 
+        private void OnClientStopped(bool _)
+        {
+            SchoolEscapeSocialServices.Instance?.LeaveSession();
+            if (IsOnlineSession && !leavingOnlineSession) LeaveOnlineSession();
+        }
+
         private void OnApplicationQuit() => SafeShutdown();
 
         private void OnDestroy()
@@ -1152,6 +1286,7 @@ namespace SchoolEscape.Multiplayer
             {
                 manager.OnClientConnectedCallback -= OnClientConnected;
                 manager.OnClientDisconnectCallback -= OnClientDisconnected;
+                manager.OnClientStopped -= OnClientStopped;
                 manager.OnTransportFailure -= OnTransportFailure;
                 SafeShutdown();
             }

@@ -1559,8 +1559,9 @@ public class SchoolEscapePrototype : MonoBehaviour
         Ally = null;
     }
 
-    public IEnumerator ResetForNetworkMatch()
+    public IEnumerator ResetForNetworkMatch(bool forceLocal = false)
     {
+        if (forceLocal) IsNetworkReplica = false;
         bool rebuildAsReplica = IsNetworkReplica;
         foreach (PrototypeEnemy enemy in enemies.ToArray())
             if (enemy != null) Destroy(enemy.gameObject);
