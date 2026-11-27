@@ -1,0 +1,62 @@
+
+
+Características Calificables
+El alumno o grupo de estudiantes deberá desarrollar un videojuego multiplataforma en Unity utilizando los servicios de Unity Gaming Services (UGS) o equivalentes.
+La cantidad máxima de integrantes por equipo será 5.
+A continuación, se detallan los requerimientos obligatorios del proyecto:
+Requerimientos
+El juego debe ser multiplataforma (debe ejecutarse correctamente en al menos dos plataformas distintas, por ejemplo PC y Android).
+
+
+Debe contar con un sistema de autenticación que permita:
+
+
+Iniciar sesión con cuenta de Google o Apple.
+
+
+Iniciar sesión anónima.
+
+
+Al iniciar por primera vez, el jugador podrá editar su nickname mediante una interfaz gráfica.
+
+
+El jugador tendrá un perfil personal con datos básicos guardados en Cloud Save, incluyendo:
+Descripción.
+Fecha de cumpleaños.
+Estado personal.
+Imagen de perfil seleccionable desde un banco de imágenes predefinido.
+El proyecto debe incluir una escena de Lobby, donde los jugadores puedan:
+Ver los lobbies disponibles y unirse a uno.
+Crear y abandonar lobbies.
+Visualizar los jugadores conectados (nombre e imagen de perfil).
+El host podrá expulsar (kick) a jugadores.
+Los demás jugadores deberán marcar Ready antes de que el host pueda iniciar la partida.
+El lobby debe incluir un chat de texto funcional, inspirado en ejemplos de juegos como Warcraft III.
+El host podrá configurar antes de iniciar la partida:
+Cantidad máxima de jugadores.
+Tipo de mapa.
+Modo de juego.
+(Opcional) Selección de equipo.
+
+
+La conexión entre jugadores deberá realizarse usando Relay y Allocation, implementando Netcode for GameObjects correctamente.
+
+
+Una vez iniciada la partida, los jugadores deben poder comunicarse mediante:
+Chat de texto
+Chat de voz (general o de proximidad, según el diseño del juego).
+Al finalizar la partida, se deberá guardar información relevante (puntuaciones, progreso u otros datos) usando Cloud Save.
+
+Características Adicionales Calificables
+Si el proyecto es visualmente coherente, se le considerará un punto adicional al estudiante o grupo de estudiantes. No es obligatorio que se creen elementos gráficos desde cero.
+Uso de Feel de manera coherente y con significado.
+Consideraciones Finales
+El alumno o grupo de estudiantes deberán aplicar los principios vistos en clase sobre autenticación, servicios en la nube, comunicación en tiempo real y arquitectura cliente-servidor.
+La temática y género del videojuego quedan a completa libertad, siempre que se cumplan los requerimientos descritos.
+
+Entregables
+Repositorio.
+Diagrama de clases.
+Documentación de justificación y evidencia de requerimientos.
+GDD.
+Link a drive que contenga vídeos(2-3 min) de los avances realizados las fechas de los entregables(Mínimo 3)

@@ -1,0 +1,559 @@
+GDD Escape de Instituto Maldito
+Versión 0.2 Alcance del MVP
+Campo
+Definición
+Estado
+Documento de diseño consolidado para el MVP
+Fecha
+17 de noviembre de 2026
+Plataforma principal
+Android API 25 o superior en orientación horizontal
+Jugadores
+2 a 4 jugadores en línea
+Duración objetivo
+5 a 15 minutos por partida
+Meta técnica
+30 FPS estables en el dispositivo de referencia
+
+ 
+Este documento define el MVP de un juego cooperativo de supervivencia en el que un grupo de estudiantes debe escapar de un instituto controlado por una secta. La entrega valida una partida completa de seis salas, cooperación real por red, administración de recursos, secuestro y rescate, dificultad dinámica y una salida parcial o perfecta según quiénes sobrevivan.
+La prioridad es construir una experiencia jugable y verificable en Android. Las ideas que no sean necesarias para este ciclo se conservan como mejoras futuras y no condicionan la aceptación del MVP.
+1 Visión del producto
+Escape de Instituto Maldito es un survival horror cooperativo de acción top down. De dos a cuatro estudiantes atraviesan habitaciones abiertas, buscan el panel que desbloquea la salida, administran flashes y vendas, y deciden cuando rescatar a compañeros raptados antes de que la actividad de la secta vuelva insostenible la partida.
+Elemento
+Definición del MVP
+Género
+Survival horror cooperativo con acción top down y evasión
+Fantasía
+Dos o más estudiantes intentan escapar juntos de un instituto maldito
+Perspectiva
+Cámara superior 2.5D
+Ritmo
+Alternancia entre calma, exploración, preparación, presión y recuperación
+Objetivo
+Desbloquear la salida y sobrevivir a una secuencia de seis salas
+Inspiración de control
+Movimiento táctil horizontal inspirado en Brawl Stars
+
+ 
+2 Plataforma y objetivos técnicos
+• Plataforma de lanzamiento del MVP: Android.
+• iOS queda planificado como una actualización futura.
+• PC se utiliza para desarrollo, pruebas y demostración, pero no es la plataforma objetivo.
+• Orientación de pantalla: horizontal.
+• Rendimiento inicial: 30 FPS estables.
+• Dispositivo de referencia disponible: Honor Magic7 Lite.
+• Versión mínima configurada: Android 7.1, nivel de API 25.
+• Target SDK: automatico, resuelto por la versión instalada del SDK de Android al compilar.
+• Presupuesto provisional por frame: 33.3 ms como máximo para sostener 30 FPS.
+• Presupuesto provisional de memoria: menos de 1 GB de uso pico durante una partida del MVP.
+• Prueba termica provisional: 15 minutos continuos sin caidas graves de rendimiento ni cierre de la aplicacion.
+• Los controles principales deben funcionar mediante pantalla táctil. Teclado y raton se mantienen como soporte de desarrollo.
+• La interfaz debe adaptarse a diferentes relaciones de aspecto horizontales sin tapar el espacio jugable.
+• La correccion del cambio entre ambos sentidos horizontales queda como tarea de baja prioridad y no bloquea el encadenado de salas ni las pruebas del Director y la IA.
+Los presupuestos de memoria y temperatura son límites preventivos estimados para el prototipo. Se reemplazaran por mediciones de Profiler y capturas del dispositivo cuando las seis salas, enemigos e interactuables esten integrados. La compilacion actual ya fue ejecutada satisfactoriamente en el Honor Magic7 Lite.
+3 Alcance del MVP
+3.1 Incluido
+• Partidas privadas para 2 a 4 jugadores reales.
+• Creación de partida y unión mediante código.
+• Seis salas por partida: Salon 1, Salon 2, Salon 3, Cafeteria 1, Cafeteria 2 y Cafeteria 3.
+• Los salones utilizan una palanca y las cafeterias utilizan tres palancas obligatorias.
+• Después de completar las palancas, la puerta inicia una espera configurable. La implementación validada utiliza 8 segundos y la siguiente prueba de estres utilizara temporalmente 30 segundos con mayor actividad del Director.
+• Dos enemigos: Chiquito y Normal.
+• Salud, estado vulnerable, arrastre, rapto, espectador y rescate posterior.
+• Flash consumible, vendas, lockers, pickups y objetos soltados por jugadores.
+• Panel eléctrico de emergencia que desbloquea la salida para todo el equipo.
+• Director de dificultad con peligro base, actividad reciente y roles tácticos.
+• Señales rapidas para cooperar sin voz.
+• Victoria perfecta, victoria parcial y derrota total.
+• Desconexión y reconexión con un período de gracia de 90 segundos.
+• Estilo visual mixto: escenarios 3D con shaders y materiales, personajes, enemigos, objetos e items representados principalmente mediante elementos 2D.
+3.2 Fuera de alcance
+• Versión iOS.
+• Bots en las partidas normales. El compañero del prototipo existe solo para pruebas.
+• Habilidades por carrera, mejoras permanentes y aumento de vida máxima.
+• Chat de voz, chat escrito y matchmaking público.
+• Barricadas complejas, escondites, inventario de cuadricula y clases de personaje.
+• Jugador raptado convertido en enemigo controlado por la secta.
+• Final narrativo definitivo y múltiples dificultades seleccionables.
+4 Arquitectura de sesión multijugador
+El MVP utiliza una arquitectura cliente servidor con un jugador como Host. La partida se publica en un lobby privado y los demas jugadores ingresan mediante un código. Relay facilita la conexión por Internet sin exponer puertos. La partida no comienza con menos de dos jugadores y admite un máximo de cuatro.
+• El cliente envía intenciones de movimiento e interacción.
+• El servidor valida daño, recursos, paneles, pickups, rescates y transiciones.
+• La IA enemiga y el Director se ejecutan en el servidor.
+• El movimiento local debe responder inmediatamente y reconciliarse con el servidor cuando sea necesario.
+• Los jugadores remotos utilizan interpolación visual.
+• La vida, inventario y estado de captura pertenecen a cada jugador y se sincronizan.
+• El estado de la salida, lockers y objetivos pertenece a la sesión o a la sala.
+• Los jugadores que entran tarde o se reconectan reciben el estado actual, no una repetición del historial de eventos.
+La desconexión del Host requiere una decisión técnica posterior: migración de Host o cierre controlado de la sesión. Para el primer incremento de networking se permite cerrar la partida si el Host abandona, pero el riesgo debe registrarse en QA.
+5 Flujo completo de una partida
+1.  El Host crea una partida privada y comparte el código.
+2.  Entre dos y cuatro jugadores se marcan como listos.
+3.  El Host inicia la partida y el servidor selecciona la primera sala.
+4.  Los jugadores aparecen juntos y comienza una fase breve de calma.
+5.  El equipo explora, abre lockers y administra sus recursos.
+6.  El Director aumenta la actividad y asigna roles a los enemigos.
+7.  El equipo localiza y activa la palanca del salon o las tres palancas de la cafeteria.
+8.  La puerta inicia la espera configurada durante la cual el Director aumenta temporalmente la actividad. La versión validada utiliza 8 segundos; la siguiente iteracion probara 30 segundos como escenario de supervivencia y estres.
+9.  Al terminar la cuenta, la puerta cambia al material abierto, deja de bloquear el paso y los jugadores libres cruzan la salida. Quien esté siendo arrastrado cuenta como raptado al abandonar la sala.
+10.  La siguiente sala aparece con una zona de rescate visible si existe algún cautivo recuperable.
+11.  El ciclo se repite hasta completar seis salas.
+12.  Si todos son raptados, la partida termina en derrota y aparece un panel de resultado con las opciones Volver a jugar y Regresar al lobby.
+13.  En la sexta sala, cada jugador puede escapar. Quienes escapen observan al resto hasta que se resuelva la partida.
+14.  El resultado final distingue escape perfecto, escape parcial y derrota total, e incluye un memorial de los raptados.
+6 Jugador salud y captura
+Estado
+Condición
+Comportamiento
+Normal
+2 o 3 corazones
+Puede moverse, interactuar, recoger objetos y usar flash.
+Vulnerable
+1 corazón
+Conserva todas las acciones. El siguiente golpe inicia el arrastre.
+Siendo arrastrado
+0 corazones
+Pierde el control mientras un enemigo lo lleva al portal más cercano.
+Raptado
+El enemigo alcanza el portal
+Entra en espectador y aparece encerrado en la siguiente sala.
+Escapo
+Cruza la salida final
+Observa el desenlace de los jugadores restantes.
+
+ 
+• La vida máxima inicial es 3 y debe permanecer configurable.
+• Una venda restaura los 3 corazones y cada jugador puede llevar como máximo una.
+• Un jugador liberado durante el arrastre vuelve con 1 corazón y 1.5 segundos de invulnerabilidad.
+• La invulnerabilidad se comunica mediante parpadeo y bloquea daño y captura, pero no permite atravesar geometría.
+• El jugador liberado conserva sus pilas y su venda.
+• Si todos los jugadores quedan raptados, se muestra Game Over con las opciones Volver a jugar y Regresar al lobby.
+7 Cámara y flash
+El flash es el principal recurso defensivo. Cada pila permite un uso y cada jugador puede transportar hasta tres. El disparo consume una pila solo cuando el servidor acepta la acción.
+Objetivo
+Efecto
+Enemigo Chiquito
+Se destruye o desaparece de inmediato.
+Enemigo Normal
+Queda aturdido durante 1.2 segundos.
+Enemigo que arrastra
+Suelta al jugador y recibe el efecto correspondiente a su tipo.
+
+ 
+El alcance, apertura del cono y tiempos de recarga se mantienen como parámetros de balance pendientes de PlayMode. El servidor valida origen, dirección, alcance, pila disponible y objetivo antes de aplicar el resultado.
+8 Objetivo de sala y salida
+La llave física se sustituye por palancas electricas de emergencia. Los salones requieren una palanca y las cafeterias requieren activar tres. Su ubicación se elige entre puntos configurados para cada variante de sala.
+• La salida comienza bloqueada y utiliza el material de puerta cerrada; cada palanca requiere una interacción canalizada de 1.5 segundos.
+• Cada palanca solo puede activarse una vez y el HUD informa cuantas faltan.
+• El servidor valida distancia, estado del jugador y disponibilidad de cada palanca.
+• Al completar todas las palancas requeridas, comienza una espera configurable. La base validada es de 8 segundos y la prueba temporal de balance sera de 30 segundos.
+• Durante la espera el Director aumenta temporalmente la actividad y el HUD muestra la cuenta regresiva.
+• Al terminar, la puerta aplica el material de puerta abierta, desactiva su colision y permite completar la sala al cruzarla, sin exigir otra pulsacion táctil.
+9 Lockers recursos e inventario
+9.1 Apertura de lockers
+El jugador pulsa Interactuar una vez para iniciar la apertura. Puede alejarse mientras el locker procesa la acción. Después de aproximadamente dos segundos, el recurso aparece en el suelo y cualquier jugador con capacidad puede recogerlo. El locker queda abierto y vacio hasta abandonar la sala.
+• Abrir varios lockers rapidamente aumenta la actividad oculta del jugador y la presión global.
+• La cadena de aperturas se calcula por jugador dentro de una ventana configurable.
+• El primer locker produce poca o ninguna penalizacion; las aperturas sucesivas generan más actividad.
+• La cantidad de objetos en el suelo no modifica el Director, porque es una métrica fácil de manipular.
+• Cada locker tiene estados persistentes: cerrado, abriendo, abierto con objeto y vacio.
+• El sonido de apertura puede atraer o redirigir enemigos.
+9.2 Modelo de recursos
+Recurso
+Máximo
+Uso
+Pila
+3 por jugador
+Cada unidad permite un flash.
+Venda
+1 por jugador
+Restaura la vida hasta 3 corazones.
+Panel de salida
+Estado de sala
+Desbloquea la salida para todo el equipo.
+
+ 
+El inventario de pilas y vendas es personal. Un jugador puede soltar un recurso; el servidor lo descuenta y crea un pickup delante del personaje. Otro jugador puede recogerlo. Si el inventario está lleno, el objeto permanece en el suelo. Todo lo abandonado desaparece al cambiar de sala.
+El loot combina muebles especializados, que garantizan una categoría, con muebles generales de contenido aleatorio. Las probabilidades pueden favorecer necesidades reales del equipo sin garantizar siempre el recurso ideal.
+10 Director de dificultad
+El Director controla ritmo, apariciones y asignación táctica. No utiliza una sola cifra interna: combina un peligro base permanente durante la partida con actividad reciente que disminuye si el equipo deja de generar ruido.
+La siguiente iteracion prioriza una prueba de estres durante la apertura de 30 segundos. El Director podrá generar una oleada numerosa para medir presión, mientras la IA mejora la persecución, el cierre de rutas y la capacidad de alcanzar, arrastrar y raptar al jugador sin apariciones injustas.
+Componente
+Aumenta por
+Efecto
+Peligro base
+Tiempo, salas superadas, rescates y jugadores raptados
+Reduce descansos y habilita tácticas más coordinadas.
+Actividad reciente
+Lockers en cadena, flashes, saqueo prolongado y rescates
+Adelanta oleadas y dirige enemigos a la zona activa.
+Cautivos
+Cantidad de jugadores raptados
+Acelera el crecimiento de la dificultad y castiga abandonar al equipo.
+
+ 
+10.1 Ritmo
+• Calma: permite reconocer la sala y organizarse.
+• Preparación: sonidos, luces o portales advierten que aumenta la actividad.
+• Presión: aparecen enemigos y se asignan roles tácticos.
+• Recuperación: baja temporalmente la actividad después de una oleada, rescate u objetivo importante.
+10.2 Roles enemigos
+Rol
+Prioridad
+Perseguidor
+Mantener presión sobre el jugador más cercano.
+Interceptor
+Cerrar rutas hacia el panel o la salida.
+Cazador de aislados
+Castigar al jugador que se separa para buscar o saquear.
+Captor
+Priorizar jugadores vulnerables y proteger el arrastre.
+Guardia
+Defender recursos, salidas y zonas de rescate.
+
+ 
+En peligro bajo predomina la persecución simple. En niveles altos el Director combina roles. Las apariciones deben respetar distancia mínima, puntos configurados y telegraphing; no se permite crear enemigos directamente sobre el jugador o de forma injusta dentro de su campo inmediato.
+11 Diseño de salas y progresión
+Una partida del MVP contiene seis salas. Los tres salones y las tres cafeterias reutilizan reglas y componentes, pero varian recorridos, mobiliario, palancas, lockers, portales e iluminación.
+Estado actual: las distribuciones de Salon 1, Salon 2, Salon 3, Cafeteria 1, Cafeteria 2 y Cafeteria 3 estan construidas. Las tres cafeterias fueron recorridas y sus puertas, tres palancas, objetos y salidas funcionan. Se corrigieron colisiones faltantes en mesas; quedan ajustes visuales y de paredes que no bloquean la integracion funcional. Cafeteria 3 puede iniciar desde sus puntos de aparición sin representar una entrada física.
+Grupo
+Objetivo de contenido
+Tres salones
+Salon 1, Salon 2 y Salon 3; cada uno utiliza una palanca.
+Tres cafeterias
+Cafeteria 1, Cafeteria 2 y Cafeteria 3; cada una utiliza tres palancas.
+Variante de rescate
+Zona visible y cerrada que puede integrarse en una sala grande.
+
+ 
+• Los mapas son espacios abiertos para esquivar, rodear y atraer enemigos.
+• Cada sala contiene spawns, salida, palancas, cobertura, lockers, pickups y puntos de aparición. La entrada no necesita representacion visual en el prototipo.
+• La ubicación y activación de elementos cambia entre configuraciones del mismo modulo.
+• Las rutas, atajos, cuellos de botella y zonas sin aparición deben documentarse en Miro antes de construir la escena final.
+• Cafeteria 1 funciona como base técnica para Cafeteria 2 y Cafeteria 3.
+12 Rapto rescate y espectador
+Cuando el enemigo lleva a un jugador hasta el portal, el cautivo entra en modo espectador y puede alternar entre compañeros libres. En la siguiente sala aparece una zona de rescate totalmente visible. Los supervivientes deben invertir tiempo y asumir presión para abrirla.
+• El cautivo conserva pilas y venda.
+• Al ser liberado vuelve con 1 corazón.
+• La apertura de la zona de rescate tiene una duración configurable pendiente de pruebas.
+• La acción de rescate genera actividad para el Director.
+• Si el equipo cambia de sala mientras un compañero está siendo arrastrado, cuenta como raptado.
+• En la sala final, quien no escape aparece en el memorial y no se genera una sala posterior de rescate.
+13 Desconexión abandono y persistencia
+• Una desconexión involuntaria conserva vida, inventario y estado durante 90 segundos.
+• Si regresa dentro del período, recupera su identidad y estado actual.
+• Al superar 90 segundos, se marca como raptado permanentemente, sale de la cola de rescate y aparece en el memorial.
+• Un jugador que abandona voluntariamente mientras tiene movilidad deja caer sus recursos personales.
+• Un jugador que abandona estando raptado no deja recursos y se elimina de la cola de rescate.
+• Los lockers abiertos, pickups recogidos y panel activado mantienen su estado para jugadores reconectados.
+14 Señales y comunicación
+El MVP no incluye voz ni chat escrito. La cooperación utiliza una rueda radial accesible mientras el jugador se desplaza. Se mantiene pulsado el botón, se arrastra hacia una opción y se suelta para enviar. Volver al centro cancela la selección.
+Señal
+Uso
+Presentación
+Ayuda
+Solicitar apoyo inmediato.
+Rojo, exclamacion.
+Necesito venda
+Comunicar falta de curación.
+Verde, cruz médica.
+Voy a rescatar
+Evitar acciones duplicadas.
+Azul, manos.
+Salgamos
+Reunir al equipo en la salida.
+Amarillo, puerta.
+Peligro
+Marcar una zona del escenario.
+Naranja, triángulo.
+Voy al panel
+Comunicar que buscara o activara el objetivo.
+Celeste, palanca o rayo.
+
+ 
+Salida desbloqueada, jugador raptado, rescate disponible, desconexión y reconexión son mensajes automáticos del sistema. Las señales manuales tienen cooldown y desaparecen después de pocos segundos. Cada una combina ícono, color, texto y posicion fija para no depender solo del color.
+15 Interfaz
+• Joystick izquierdo para movimiento en 360 grados.
+• Controles derechos para flash, interacción, venda y rueda de señales.
+• HUD con corazones, pilas, venda, estado del objetivo y peligro.
+• El peligro se comunica como un valor rojo acompañado por estados como Calma, Alerta y Cacería.
+• Los jugadores raptados disponen de selector de espectador.
+• El lobby muestra código, lista de 2 a 4 participantes, estado Listo y botón de inicio exclusivo del Host.
+16 Balance inicial configurable
+Parámetro
+Valor inicial
+Estado
+Vida máxima
+3 corazones
+Confirmado para MVP
+Pilas máximas
+3 por jugador
+Confirmado para MVP
+Vendas máximas
+1 por jugador
+Confirmado para MVP
+Flash por pila
+1
+Confirmado para MVP
+Stun enemigo Normal
+1.2 segundos
+Base del prototipo
+Activación del panel
+1.5 segundos
+Valor inicial
+Apertura de la puerta
+8 s validados; prueba temporal de 30 s
+Configurable para balance y estres
+Aumento durante apertura
++1.25 al multiplicador de peligro
+Estimacion configurable
+Apertura de locker
+2 segundos
+Valor inicial
+Invulnerabilidad al liberar
+1.5 segundos
+Valor inicial
+Reconexión
+90 segundos
+Confirmado para MVP
+Salas por partida
+6
+Confirmado para MVP
+Alcance y cono del flash
+Por definir
+Requiere PlayMode
+Duración del rescate
+Por definir
+Requiere PlayMode
+
+ 
+17 Condiciones de resultado
+Resultado
+Condición
+Escape perfecto
+Todos los jugadores escapan de la sexta sala.
+Escape parcial
+Al menos un jugador escapa y uno o más quedan raptados.
+Derrota total
+Todos los jugadores quedan raptados antes de escapar.
+
+ 
+El final narrativo definitivo se diseñara después de validar la curva de dificultad. Para el MVP, completar seis salas es una condición suficiente para probar una partida de principio a fin.
+18 Criterios generales de aceptación
+• La partida puede completarse de principio a fin con dos jugadores por Internet.
+• La arquitectura admite hasta cuatro jugadores sin cambiar las reglas principales.
+• El servidor es la fuente de verdad para daño, inventario, objetivos, rapto y salida.
+• La primera sala guardada reemplaza la dependencia de geometría generada en runtime.
+• La partida completa incluye seis transiciones de sala y un resultado final.
+• El jugador puede abrir lockers, recoger, usar, soltar y compartir recursos.
+• Los estados vulnerable, arrastrado, raptado y liberado son visibles y sincronizados.
+• El Director alterna fases de ritmo y aumenta la presión al acumular cautivos.
+• Al producirse una derrota, el panel de resultado permite iniciar otra partida o regresar al lobby.
+• El juego mantiene 30 FPS estables en el dispositivo Android de referencia durante la captura de prueba acordada.
+• Cada requisito funcional dispone de una tarjeta de implementación y una prueba de aceptación asociada.
+18.1 Matriz de requisitos del MVP
+El estado [x] indica que existe una implementación o decisión documentada. El estado [ ] indica trabajo pendiente. Una implementación marcada sigue necesitando ejecutar su prueba manual antes de cerrar QA.
+Código
+Estado
+Requisito
+Prueba de aceptación
+PLAT-01
+[x]
+Compilar y ejecutar en Android horizontal.
+Abrir la APK en el Honor Magic7 Lite.
+PLAT-02
+[x]
+Usar Android mínimo API 25 y target SDK automatico.
+Revisar Player Settings y el manifiesto de la compilacion.
+PERF-01
+[x]
+Mantener como objetivo 30 FPS y 33.3 ms por frame.
+Jugar 15 minutos en el dispositivo sin caidas graves.
+SCOPE-01
+[x]
+Limitar el MVP a tres salones y tres cafeterias.
+La lista de contenido contiene exactamente seis salas.
+FLOW-01
+[x]
+Documentar el flujo completo desde lobby hasta resultado.
+Recorrer los pasos de la seccion 5 sin contradicciones.
+ARCH-01
+[x]
+Separar jugador, enemigos, inventario, salas, UI e interactuables.
+Los sistemas principales existen en componentes distintos.
+ROOM-01
+[x]
+Disponer de Salon 1, Salon 2 y Salon 3 diseñados y probados.
+Recorrer cada salon sin atravesar ni quedar atrapado en geometría.
+ROOM-02
+[x]
+Usar Cafeteria 1 como plantilla funcional.
+Validar spawns, palancas, salida e interactuables de Cafeteria 1.
+ROOM-03
+[x]
+Integrar y probar Cafeteria 2 y Cafeteria 3 en Unity.
+Abrir, activar las tres palancas y completar ambas variantes desde el proyecto.
+OBJ-01
+[x]
+Requerir una palanca en cada salon.
+Activar la palanca y observar el inicio de apertura.
+OBJ-02
+[x]
+Requerir las tres palancas en cada cafeteria.
+Confirmar que una o dos no bastan y que la tercera inicia la apertura.
+OBJ-03
+[x]
+Esperar el tiempo configurado con mayor peligro antes de abrir la salida.
+Comprobar la base validada de 8 segundos, la cuenta, la presión, el material y la colision.
+MOVE-01
+[x]
+Mantener velocidad constante en movimiento cardinal y diagonal.
+Comparar recorridos rectos y diagonales durante el mismo tiempo.
+COL-01
+[x]
+Evitar atravesamientos y enganches aparentes en los mapas actuales.
+Recorrer paredes, muebles, esquinas y puertas en PC y telefono.
+CAP-01
+[x]
+Ocultar al aliado cuando es raptado.
+Dejar que llegue al portal y comprobar que ya no se renderiza.
+INV-01
+[x]
+Permitir usar una venda con vida incompleta.
+Recibir daño, recoger una venda y recuperar tres corazones.
+UI-01
+[x]
+Mostrar joystick, flash, interacción, venda, objetivo y peligro.
+Verificar todos los controles en MobileHUD.
+UI-02
+[ ]
+Aceptar ambos sentidos horizontales sin rotacion ciclica al sostener el telefono vertical.
+Iniciar y girar el telefono en sus cuatro posiciones; solo los dos horizontales deben cambiar la vista.
+ART-01
+[x]
+Definir personajes, paredes, mobiliario y estilo 2D en Miro.
+Adjuntar el tablero o capturas como anexo del GDD.
+ART-02
+[ ]
+Completar la mitad restante del estilo de salas, muebles, items, jugadores y zombis.
+Revisar las seis distribuciones con una dirección visual consistente y legible.
+SESSION-01
+[ ]
+Encadenar las seis salas en una partida.
+Completar seis transiciones y mostrar el resultado final.
+BAL-01
+[ ]
+Probar temporalmente una apertura de 30 segundos con aparición masiva.
+Sobrevivir la cuenta, registrar presión y ajustar cantidad, ritmo y justicia de los spawns.
+DIR-01
+[ ]
+Mejorar el Director y la IA para perseguir, cerrar rutas y capturar al jugador.
+Observar enemigos capaces de alcanzar, arrastrar y raptar sin aparecer injustamente encima del jugador.
+NET-01
+[ ]
+Sincronizar reglas principales para dos a cuatro jugadores.
+Completar una partida de dos jugadores por Internet.
+
+ 
+18.2 Lista de pruebas manuales
+Prueba
+Plataforma
+Acción
+Resultado aprobado
+QA-01
+PC y telefono
+Recorrer paredes, esquinas, muebles y puertas.
+No atraviesa ni queda enganchado.
+QA-02
+PC y telefono
+Moverse el mismo tiempo en recto y diagonal.
+La velocidad percibida permanece constante.
+QA-03
+Telefono
+Moverse mientras se apunta y dispara el flash.
+Los dos dedos se reconocen sin perder el joystick.
+QA-04
+Telefono
+Recibir daño, recoger y usar una venda.
+La vida vuelve a tres y la venda se consume.
+QA-05
+PC y telefono
+Permitir que el aliado sea llevado al portal.
+El aliado desaparece y aumenta el peligro.
+QA-06
+PC y telefono
+Activar una palanca en un salon.
+Comienza la apertura de la puerta.
+QA-07
+PC y telefono
+Activar una y dos palancas en una cafeteria.
+La salida permanece bloqueada.
+QA-08
+PC y telefono
+Activar la tercera palanca.
+Inicia una cuenta de 8 segundos y aumenta el peligro.
+QA-09
+PC y telefono
+Esperar la cuenta junto a la salida.
+Cambia a PuertaAbierta, desaparece la colision y se puede cruzar.
+QA-10
+Telefono
+Sostener el dispositivo vertical y girarlo levemente.
+La pantalla permanece en una sola orientación horizontal.
+QA-11
+Telefono
+Jugar 15 minutos seguidos.
+No hay cierre, sobrecalentamiento grave ni degradacion evidente.
+QA-12
+Unity
+Validar cada prefab de sala.
+No hay scripts perdidos, referencias nulas ni salidas sin configurar.
+QA-13
+PC y telefono
+Configurar 30 segundos y activar la tercera palanca de una cafeteria.
+El Director genera una prueba de supervivencia intensa sin spawns injustos ni bloqueo inevitable.
+QA-14
+PC y telefono
+Dejar que la IA persiga a un jugador vulnerable durante la oleada.
+El enemigo cierra distancia, inicia el arrastre y puede completar el rapto si no recibe ayuda.
+
+ 
+19 Mejoras futuras
+• Versión iOS.
+• Tutorial individual y posibles bots de entrenamiento.
+• Chat de voz y señales contextuales adicionales.
+• Jugador desconectado convertido en cultista o enemigo.
+• Habilidades de personajes por especialidad.
+• Mejoras permanentes, incluida vida máxima.
+• Barricadas, escondites, inventario de cuadricula y más objetos de misión.
+• Mas variantes de salas, finales narrativos y dificultades seleccionables.
+• Matchmaking público y opciones avanzadas de infraestructura.
+20 Referencias de diseño
+Las siguientes obras orientan decisiones concretas, pero no convierten automáticamente todas sus mecánicas en requisitos del MVP.
+Referencia
+Aporte
+Brawl Stars
+Controles táctiles, lectura top down, espacios abiertos y rueda de señales.
+Left 4 Dead
+Director de ritmo, avance por zonas, rescate y memoria de supervivientes.
+Pac Man
+Intercepción de rutas y roles enemigos legibles.
+Alien Isolation
+Presión dinámica y sensación de persecución.
+Dino Crisis
+Espacios cerrados y administración limitada de recursos.
+The Coma 2
+Ambientación escolar e interactividad con mobiliario.
+Dead by Daylight, Friday the 13th, Dont Starve y South Park
+Captura, rescate, tensión cooperativa y referencia visual para el estilo 2D recortado.
+
+ 
+21 Decisiones pendientes
+• Conjunto final de resoluciones y relaciones de aspecto de aceptación.
+• Comportamiento de la sesión si el Host se desconecta.
+• Duración exacta de calma, recuperación y apertura de la zona de rescate.
+• Alcance, apertura y cooldown final del flash.
+• Fórmula y límites del peligro base y de la actividad reciente.
+• Presupuesto final de enemigos, objetos de red, memoria y batería.
+
