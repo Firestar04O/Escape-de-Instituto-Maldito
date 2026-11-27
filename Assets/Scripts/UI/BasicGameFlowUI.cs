@@ -1,8 +1,10 @@
 using System.Collections;
 using System.Collections.Generic;
+using System.Threading;
 using SchoolEscape.Multiplayer;
 using UnityEngine;
 using UnityEngine.EventSystems;
+using UnityEngine.InputSystem.UI;
 using UnityEngine.UI;
 
 namespace SchoolEscape.UI
@@ -26,6 +28,15 @@ namespace SchoolEscape.UI
         private Button readyButton, retryButton, resultExitButton;
         private string confirmedPlayerName;
         private bool resultShown, victoryReturnScheduled, previousGameplayActive;
+        private GameObject playPanel, friendsPanel;
+        private Text playStatus, playName;
+        private Button quickButton;
+        private Button lobbyFriendsButton;
+        private CancellationTokenSource quickSearch;
+        private bool soloPlaying, soloStarting;
+        private int playMode;
+        private Text modeLabel;
+        private static readonly string[] Modes = { "PARTIDA RÁPIDA", "CON AMIGOS", "JUGAR SOLO" };
 
         public static bool HasAnnouncementPresenter { get; private set; }
         public static bool IsMenuVisible { get; private set; }
@@ -49,14 +60,26 @@ namespace SchoolEscape.UI
         {
             if (transform.Find("03 - Lobby") != null) BindPrefabUi();
             else BuildUi();
+            lobbyPlayers.raycastTarget = false;
+            lobbyStatus.raycastTarget = false;
+            readyLabel.raycastTarget = false;
             confirmedPlayerName = SchoolEscapeNetworkBootstrap.LoadSavedPlayerName();
             nameInput.text = confirmedPlayerName;
+            BuildPlayCenter();
+            SchoolEscapeSocialUI.EnsureFor(transform, friendsPanel, OpenLobby, () =>
+                OpenPanel(SchoolEscapeNetworkBootstrap.Instance?.IsOnlineSession == true ? lobbyPanel : playPanel));
+            WireButton(mainPanel, "Botón - JUGAR", OpenPlayCenter);
+            WireButton(connectionPanel, "Botón - VOLVER", () => OpenPanel(playPanel));
             ShowMainMenu();
         }
 
         private void Update()
         {
             SchoolEscapeNetworkBootstrap bootstrap = SchoolEscapeNetworkBootstrap.Instance;
+            quickButton.interactable = quickSearch != null || (!soloStarting && (bootstrap == null || !bootstrap.IsConnecting));
+            playName.text = confirmedPlayerName;
+            if (soloPlaying && !resultShown && session != null && session.DisplayMatchResult != PrototypeMatchResult.InProgress)
+                ShowResult(session.DisplayMatchResult, null);
             if (networkStatus != null && bootstrap != null) networkStatus.text = bootstrap.Status;
             UpdateAnnouncement();
             UpdateLobby(bootstrap);
@@ -67,17 +90,26 @@ namespace SchoolEscape.UI
                 if (session != null && session.MobileHud != null) session.MobileHud.gameObject.SetActive(true);
                 Time.timeScale = 1f;
             }
-            else if (bootstrap != null && previousGameplayActive && !bootstrap.GameplayActive && bootstrap.IsOnlineSession)
+            else if (bootstrap != null && previousGameplayActive && !bootstrap.GameplayActive)
             {
                 resultShown = false;
                 victoryReturnScheduled = false;
-                OpenPanel(lobbyPanel);
+                if (bootstrap.IsOnlineSession) OpenPanel(lobbyPanel);
+                else
+                {
+                    OpenPanel(playPanel);
+                    playStatus.text = bootstrap.Status;
+                }
                 Time.timeScale = 0f;
             }
             previousGameplayActive = bootstrap != null && bootstrap.GameplayActive;
 
             if (bootstrap != null && !bootstrap.IsOnlineSession && !bootstrap.IsListening &&
-                (lobbyPanel.activeSelf || resultPanel.activeSelf)) ShowMainMenu();
+                !soloPlaying && (lobbyPanel.activeSelf || resultPanel.activeSelf))
+            {
+                OpenPanel(playPanel);
+                playStatus.text = bootstrap.Status;
+            }
             if (session == null || resultShown || bootstrap == null || !bootstrap.GameplayActive) return;
             PrototypeMatchResult result = session.DisplayMatchResult;
             if (result != PrototypeMatchResult.InProgress) ShowResult(result, bootstrap);
@@ -85,6 +117,7 @@ namespace SchoolEscape.UI
 
         private void OnDestroy()
         {
+            quickSearch?.Cancel();
             HasAnnouncementPresenter = false;
             IsMenuVisible = false;
             if (Time.timeScale == 0f) Time.timeScale = 1f;
@@ -132,7 +165,90 @@ namespace SchoolEscape.UI
             codeInput.characterLimit = 12;
             CreateButton(connectionPanel.transform, "UNIRSE", new Vector2(0, -75), Primary, JoinRoom);
             networkStatus = CreateText(connectionPanel.transform, "Sin conexión", 20, FontStyle.Normal, new Vector2(0, -135), new Vector2(800, 42), new Color(.85f, .85f, .55f));
-            CreateButton(connectionPanel.transform, "VOLVER", new Vector2(0, -210), Secondary, ShowMainMenu);
+            CreateButton(connectionPanel.transform, "VOLVER", new Vector2(0, -210), Secondary, () => OpenPanel(playPanel));
+        }
+
+        private void BuildPlayCenter()
+        {
+            playPanel = CreatePanel("08 - Centro de juego");
+            friendsPanel = CreatePanel("09 - Amigos");
+            lobbyFriendsButton = CreateButton(lobbyPanel.transform, "AMIGOS", new Vector2(350, -250), Secondary, OpenFriends, new Vector2(180, 48));
+            lobbyFriendsButton.gameObject.SetActive(false);
+            Transform panel = playPanel.transform;
+            playName = CreateText(panel, confirmedPlayerName, 26, FontStyle.Bold, new Vector2(-270, 270), new Vector2(360, 52));
+            CreateButton(panel, "AMIGOS", new Vector2(335, 270), Secondary, OpenFriends, new Vector2(220, 52));
+            var avatar = CreateText(panel, "●", 130, FontStyle.Bold, new Vector2(0, 105), new Vector2(320, 180), new Color(.2f, .65f, 1f));
+            avatar.gameObject.name = "Vista del personaje (reemplazable)";
+            modeLabel = CreateText(panel, Modes[0], 30, FontStyle.Bold, new Vector2(0, -45), new Vector2(430, 60));
+            CreateButton(panel, "‹", new Vector2(-265, -45), Secondary, () => ChangeMode(-1), new Vector2(72, 58));
+            CreateButton(panel, "›", new Vector2(265, -45), Secondary, () => ChangeMode(1), new Vector2(72, 58));
+            quickButton = CreateButton(panel, "BUSCAR PARTIDA", new Vector2(0, -130), Primary, ChooseMode);
+            playStatus = CreateText(panel, "", 20, FontStyle.Normal, new Vector2(0, -208), new Vector2(780, 65), Muted);
+            CreateButton(panel, "OPCIONES POR CÓDIGO", new Vector2(150, -280), Secondary, () =>
+            {
+                if (quickSearch == null) OpenPanel(connectionPanel);
+            }, new Vector2(290, 52));
+            CreateButton(panel, "VOLVER", new Vector2(-170, -280), Secondary, () =>
+            {
+                if (quickSearch == null) ShowMainMenu();
+            }, new Vector2(260, 52));
+        }
+
+        private void ChangeMode(int direction)
+        {
+            if (quickSearch != null || soloStarting) return;
+            playMode = (playMode + direction + Modes.Length) % Modes.Length;
+            modeLabel.text = Modes[playMode];
+            quickButton.GetComponentInChildren<Text>().text = playMode == 0 ? "BUSCAR PARTIDA" :
+                playMode == 1 ? "ABRIR AMIGOS" : "EMPEZAR";
+            playStatus.text = string.Empty;
+        }
+
+        private void OpenFriends()
+        {
+            if (quickSearch != null || soloStarting || SchoolEscapeNetworkBootstrap.Instance?.IsConnecting == true) return;
+            OpenPanel(friendsPanel);
+            _ = SchoolEscapeSocialServices.Ensure().ConnectFriendsAsync();
+        }
+
+        private void OpenPlayCenter()
+        {
+            OpenPanel(playPanel);
+            _ = SchoolEscapeSocialServices.Ensure().ConnectFriendsAsync();
+        }
+
+        private async void ChooseMode()
+        {
+            if (quickSearch != null) { quickSearch.Cancel(); return; }
+            if (playMode == 1) { OpenFriends(); return; }
+            if (playMode == 2) { StartCoroutine(StartSolo()); return; }
+            var bootstrap = SchoolEscapeNetworkBootstrap.EnsureFor(session);
+            using var search = new CancellationTokenSource();
+            quickSearch = search;
+            quickButton.GetComponentInChildren<Text>().text = "CANCELAR";
+            playStatus.text = "Buscando compañero…";
+            try
+            {
+                if (await bootstrap.FindQuickMatchAsync(confirmedPlayerName, search.Token))
+                    OpenLobby();
+                if (this != null) playStatus.text = bootstrap.Status;
+            }
+            finally
+            {
+                quickSearch = null;
+                if (this != null) quickButton.GetComponentInChildren<Text>().text = "BUSCAR PARTIDA";
+            }
+        }
+
+        private IEnumerator StartSolo()
+        {
+            if (soloStarting || session == null) yield break;
+            soloStarting = true;
+            yield return session.ResetForNetworkMatch(forceLocal: true);
+            soloPlaying = true;
+            soloStarting = resultShown = victoryReturnScheduled = false;
+            CloseAllPanels();
+            Time.timeScale = 1f;
         }
 
         private void BuildLobbyPanel()
@@ -280,21 +396,28 @@ namespace SchoolEscape.UI
         private void UpdateLobby(SchoolEscapeNetworkBootstrap bootstrap)
         {
             if (bootstrap == null || lobbyPanel == null) return;
+            lobbyFriendsButton.gameObject.SetActive(bootstrap.CanInvite);
             lobbyCode.text = "CÓDIGO: " + (string.IsNullOrEmpty(bootstrap.SessionCode) ? "—" : bootstrap.SessionCode);
+            lobbyCode.gameObject.SetActive(bootstrap.ShowsRoomCode);
+            var copy = FindComponent<Button>(lobbyPanel, "Botón - COPIAR");
+            if (copy != null) copy.gameObject.SetActive(bootstrap.ShowsRoomCode);
             lobbyPlayers.text = $"{bootstrap.HostPlayerName}  {(bootstrap.HostReady ? "✓ LISTO" : "· ESPERANDO")}\n" +
                 (bootstrap.HasRemoteClient || !string.IsNullOrEmpty(bootstrap.ClientPlayerName) ? $"{bootstrap.ClientPlayerName}  {(bootstrap.ClientReady ? "✓ LISTO" : "· ESPERANDO")}" : "Esperando jugador 2…");
-            if (bootstrap.CountdownActive)
+            lobbyStatus.text = bootstrap.MatchStartInProgress ? "Sincronizando jugadores…"
+                : bootstrap.IsReadyVotePending ? "Confirmando con el anfitrión…"
+                : !bootstrap.CanSetReady ? (bootstrap.IsListening ? "Conectando al lobby…" : bootstrap.Status)
+                : !string.IsNullOrEmpty(bootstrap.ReadyVoteError) ? bootstrap.ReadyVoteError
+                : !string.IsNullOrEmpty(bootstrap.MatchStartError) ? bootstrap.MatchStartError
+                : bootstrap.HasRemoteClient || !bootstrap.IsHost
+                    ? "Ambos jugadores deben estar listos" : "Esperando al segundo jugador…";
+            readyButton.interactable = bootstrap.CanSetReady;
+            nameInput.interactable = bootstrap.CanSetReady;
+            readyLabel.text = bootstrap.LocalReady ? "NO ESTOY LISTO" : "LISTO";
+            if (bootstrap.MatchStartInProgress && nameInput.isFocused)
             {
-                lobbyStatus.text = $"LA PARTIDA COMIENZA EN {bootstrap.CountdownSeconds}";
-                nameInput.interactable = false; readyLabel.text = "CANCELAR";
-                if (nameInput.isFocused) { nameInput.DeactivateInputField(); nameInput.text = confirmedPlayerName; }
+                nameInput.DeactivateInputField();
+                nameInput.text = confirmedPlayerName;
             }
-            else
-            {
-                lobbyStatus.text = bootstrap.HasRemoteClient ? "Ambos jugadores deben estar listos" : "Si empiezas ahora, jugarás con el aliado IA";
-                nameInput.interactable = true; readyLabel.text = bootstrap.LocalReady ? "NO ESTOY LISTO" : "LISTO";
-            }
-            if (resultPanel.activeSelf && bootstrap.CountdownActive) resultStatus.text = $"Reiniciando en {bootstrap.CountdownSeconds}…";
         }
 
         private void ShowResult(PrototypeMatchResult result, SchoolEscapeNetworkBootstrap bootstrap)
@@ -305,7 +428,8 @@ namespace SchoolEscape.UI
             resultBody.text = $"Tiempo: {session.DisplayRunTime:0.0} s · {session.DisplayRoomProgressText}\n{session.MemorialText}";
             retryButton.gameObject.SetActive(!victory); resultExitButton.gameObject.SetActive(!victory);
             retryButton.interactable = true;
-            resultStatus.text = victory ? "Volviendo al lobby en 6 segundos…" : "Ambos jugadores deben aceptar para reintentar.";
+            resultStatus.text = victory ? "Volviendo en 6 segundos…" : soloPlaying
+                ? "Puedes reintentar o volver al centro de juego." : "Ambos jugadores deben aceptar para reintentar.";
             OpenPanel(resultPanel);
             if (victory && !victoryReturnScheduled) { victoryReturnScheduled = true; StartCoroutine(ReturnToLobbyAfterVictory(bootstrap)); }
         }
@@ -313,6 +437,7 @@ namespace SchoolEscape.UI
         private IEnumerator ReturnToLobbyAfterVictory(SchoolEscapeNetworkBootstrap bootstrap)
         {
             yield return new WaitForSecondsRealtime(6f);
+            if (soloPlaying) { ExitResultToLobby(); yield break; }
             if (bootstrap != null && bootstrap.IsHost) bootstrap.ReturnAfterVictory();
         }
 
@@ -340,9 +465,7 @@ namespace SchoolEscape.UI
         private void ToggleReady()
         {
             SchoolEscapeNetworkBootstrap bootstrap = SchoolEscapeNetworkBootstrap.Instance;
-            if (bootstrap == null) return;
-            ConfirmPlayerName(nameInput.text);
-            if (bootstrap.IsHost && !bootstrap.HasRemoteClient && !bootstrap.LocalReady) { OpenPanel(soloConfirmPanel); return; }
+            if (bootstrap == null || !bootstrap.CanSetReady) return;
             bootstrap.SetLocalReady(!bootstrap.LocalReady);
         }
 
@@ -351,15 +474,32 @@ namespace SchoolEscape.UI
         private void ConfirmPlayerName(string value)
         {
             SchoolEscapeNetworkBootstrap bootstrap = SchoolEscapeNetworkBootstrap.Instance;
-            if (bootstrap != null && bootstrap.CountdownActive) { nameInput.text = confirmedPlayerName; return; }
+            if (bootstrap != null && bootstrap.MatchStartInProgress) { nameInput.text = confirmedPlayerName; return; }
             confirmedPlayerName = string.IsNullOrWhiteSpace(value) ? "Jugador" : value.Trim();
             if (confirmedPlayerName.Length > 18) confirmedPlayerName = confirmedPlayerName.Substring(0, 18);
             nameInput.text = confirmedPlayerName; bootstrap?.SetLocalPlayerName(confirmedPlayerName);
         }
 
-        private void RetryGame() { SchoolEscapeNetworkBootstrap.Instance?.SubmitRetryVote(true); retryButton.interactable = false; resultStatus.text = "Esperando la decisión del otro jugador…"; }
-        private void ExitResultToLobby() => SchoolEscapeNetworkBootstrap.Instance?.SubmitRetryVote(false);
-        private void LeaveRoom() { SchoolEscapeNetworkBootstrap.Instance?.LeaveOnlineSession(); ShowMainMenu(); }
+        private void RetryGame()
+        {
+            if (soloPlaying) { StartCoroutine(StartSolo()); return; }
+            SchoolEscapeNetworkBootstrap.Instance?.SubmitRetryVote(true);
+            retryButton.interactable = false;
+            resultStatus.text = "Esperando la decisión del otro jugador…";
+        }
+        private void ExitResultToLobby()
+        {
+            if (!soloPlaying) { SchoolEscapeNetworkBootstrap.Instance?.SubmitRetryVote(false); return; }
+            soloPlaying = false;
+            OpenPanel(playPanel);
+        }
+        private async void LeaveRoom()
+        {
+            var bootstrap = SchoolEscapeNetworkBootstrap.Instance;
+            if (bootstrap == null || bootstrap.IsConnecting) return;
+            await bootstrap.LeaveOnlineSessionAsync();
+            if (this != null) OpenPanel(playPanel);
+        }
         private void CopyRoomCode() { string code = SchoolEscapeNetworkBootstrap.Instance?.SessionCode; if (!string.IsNullOrEmpty(code)) GUIUtility.systemCopyBuffer = code; }
         private void ShowMainMenu() { Time.timeScale = 0f; OpenPanel(mainPanel); }
         private void OpenPanel(GameObject target)
@@ -429,7 +569,7 @@ namespace SchoolEscape.UI
         private static void EnsureEventSystem()
         {
             if (FindFirstObjectByType<EventSystem>() != null) return;
-            new GameObject("EventSystem", typeof(EventSystem), typeof(StandaloneInputModule)).transform.SetAsFirstSibling();
+            new GameObject("EventSystem", typeof(EventSystem), typeof(InputSystemUIInputModule)).transform.SetAsFirstSibling();
         }
     }
 }

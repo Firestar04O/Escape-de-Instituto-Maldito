@@ -1,0 +1,599 @@
+@startuml
+class PrototypeEnemy {
+    - nextSnapshotId : int
+    - session : SchoolEscapePrototype
+    + IsSmall : bool
+    - controller : CharacterController
+    - agent : NavMeshAgent
+    - stunnedUntil : float
+    - nextHit : float
+    - nextDestinationUpdate : float
+    - nextNavMeshRecovery : float
+    - dragTarget : PrototypeActor
+    - priorityTarget : PrototypeActor
+    + Role : EnemyRole
+    - HasNavigation : bool
+}
+class PrototypeActor <<abstract>> {
+    + Health : int
+    + IsDown : bool
+    + PresentationVisible : bool
+    + IsBeingDragged : bool
+    + CanDrawEnemyAggro : bool
+    + CanBeDragged : bool
+    + CanAct : bool
+    # Controller : CharacterController
+    - nextDamageTime : float
+}
+class PrototypeInventory {
+    + MaxBatteries : int
+    + MaxBandages : int
+}
+class PrototypeRitual {
+}
+class PrototypeCamera {
+    - session : SchoolEscapePrototype
+    - velocity : Vector3
+}
+class PrototypeInteractable <<abstract>> {
+    + Complete(actor : PrototypeActor) : void
+}
+class PrototypeLocker {
+    - searched : bool
+}
+class PrototypeKey {
+}
+class PrototypeExitPanel {
+    - activated : bool
+}
+class PrototypeGuaranteedResourceFurniture <<abstract>> {
+    - searched : bool
+    # SpawnGuaranteedResource(actor : PrototypeActor) : void
+}
+class PrototypeBatteryFurniture {
+}
+class PrototypeBandageFurniture {
+}
+class PrototypeBatteryWorldPickup {
+}
+class PrototypeBandageWorldPickup {
+}
+class PrototypeDoor {
+    - completed : bool
+}
+class PrototypeRescue {
+}
+class PrototypeRescueEntrance {
+}
+class NetworkClientAllyBridge {
+    - Speed : float
+    - TickDelta : float
+    - InputHistorySize : int
+    - MaximumServerCatchUpTicks : int
+    - ReconciliationThreshold : float
+    - VisualCorrectionSharpness : float
+    - FlashAimThreshold : float
+    - FlashCancelRadius : float
+    - MaximumAcceptedTickAdvance : uint
+    - MaximumInputMagnitude : float
+    - BandageCooldown : float
+    - FlashCooldown : float
+    - MaximumFlashRewindSeconds : double
+    - FlashFutureToleranceSeconds : double
+    - syncedHealth : NetworkVariable<int>
+    - syncedBatteries : NetworkVariable<int>
+    - syncedBandages : NetworkVariable<int>
+    - syncedDanger : NetworkVariable<float>
+    - syncedRunTime : NetworkVariable<float>
+    - syncedVictory : NetworkVariable<bool>
+    - syncedDefeat : NetworkVariable<bool>
+    - syncedMatchResult : NetworkVariable<int>
+    - syncedCaptive : NetworkVariable<bool>
+    - syncedEscaped : NetworkVariable<bool>
+    - syncedVisible : NetworkVariable<bool>
+    - syncedRoomIndex : NetworkVariable<int>
+    - syncedRescueActive : NetworkVariable<bool>
+    - syncedRescueOpen : NetworkVariable<bool>
+    - syncedRoom : NetworkVariable<FixedString64Bytes>
+    - syncedExit : NetworkVariable<FixedString64Bytes>
+    - syncedAnnouncement : NetworkVariable<FixedString128Bytes>
+    - syncedPersonalAnnouncement : NetworkVariable<FixedString128Bytes>
+    - syncedInteraction : NetworkVariable<FixedString128Bytes>
+    - syncedAuthoritativePosition : NetworkVariable<Vector3>
+    - syncedLastProcessedTick : NetworkVariable<uint>
+    - ally : PrototypeAlly
+    - session : SchoolEscapePrototype
+    - currentInteraction : PrototypeInteractable
+    - inputHistory : PredictedInput[]
+    - interactionProgress : float
+    - nextFlashTime : float
+    - nextBandageTime : float
+    - localInputTick : uint
+    - lastServerProcessedTick : uint
+    - lastReconciledTick : uint
+    - correctionCount : int
+    - lastCorrectionDistance : float
+    - maximumCorrectionDistance : float
+    - moveFinger : int
+    - uiInteractHeld : bool
+    - serverInteractHeld : bool
+    - aimingFlash : bool
+    - flashUsesMouse : bool
+    - manualFlashAim : bool
+    - flashWasDragged : bool
+    - flashFinger : int
+    - flashPressPosition : Vector2
+    - flashAimDirection : Vector3
+    - aimIndicator : GameObject
+    - predictedPresentation : Transform
+    - rootRenderer : Renderer
+    - predictedRenderer : Renderer
+    - networkTransform : NetworkTransform
+    + DisplayHealth : int
+    + DisplayBatteries : int
+    + DisplayBandages : int
+    + DisplayDanger : float
+    + DisplayRunTime : float
+    + DisplayVictory : bool
+    + DisplayDefeat : bool
+    + DisplayCaptive : bool
+    + DisplayMatchResult : PrototypeMatchResult
+    + DisplayRoom : string
+    + DisplayExit : string
+    + DisplayAnnouncement : string
+    + InteractionStatus : string
+    + PredictionTick : uint
+    + LastAcknowledgedTick : uint
+    + PendingPredictionCount : int
+    + CorrectionCount : int
+    + LastCorrectionDistance : float
+    + MaximumCorrectionDistance : float
+}
+class PredictedInput {
+    + Tick : uint
+    + Move : Vector2
+    + PredictedPosition : Vector3
+    + Valid : bool
+}
+class NetworkHostPlayerBridge {
+    - syncedHealth : NetworkVariable<int>
+    - syncedCaptive : NetworkVariable<bool>
+    - syncedEscaped : NetworkVariable<bool>
+    - syncedVisible : NetworkVariable<bool>
+    - player : PrototypePlayer
+}
+class SchoolEscapeNetworkBootstrap {
+    + DefaultPort : ushort
+    + Status : string
+    + IsListening : bool
+    + HasRemoteClient : bool
+    + IsOnlineSession : bool
+    + IsConnecting : bool
+    + CanInvite : bool
+    + IsHost : bool
+    + CanSetReady : bool
+    + MatchStartError : string
+    + SessionCode : string
+    + SessionId : string
+    + LocalPlayerName : string
+    + HostPlayerName : string
+    + ClientPlayerName : string
+    + LocalReady : bool
+    - HostPlayerResource : string
+    - ClientAllyResource : string
+    - EnemySnapshotMessage : string
+    - LobbyCommandMessage : string
+    - LobbySnapshotMessage : string
+    - EnemySnapshotInterval : float
+    - MatchLoadTimeout : float
+    + AoiEnterDistance : float
+    + AoiExitDistance : float
+    - SecurityKickThreshold : int
+    - SecurityStrikeWindowSeconds : double
+    - session : SchoolEscapePrototype
+    - manager : NetworkManager
+    - transport : UnityTransport
+    - hostPlayerPrefab : GameObject
+    - clientAllyPrefab : GameObject
+    - remoteAlly : NetworkObject
+    - startInProgress : bool
+    - activePort : ushort
+    - remoteClientId : ulong?
+    - nextEnemySnapshotTime : float
+    - enemyHandlerRegistered : bool
+    - enemyVisuals : List<EnemyVisualProxy>
+    - relevantEnemies : List<PrototypeEnemy>
+    - visibleEnemyIds : HashSet<int>
+    - nextVisibleEnemyIds : HashSet<int>
+    - rewindHistory : ServerRewindHistory
+    - securityStrikes : int
+    - securityWindowStartedAt : double
+    - onlineSession : ISession
+    - hostOnlineSession : IHostSession
+    - lobbyHandlersRegistered : bool
+    - clientLoadedMatch : bool
+    - roomLockUpdate : Task
+    - leavingOnlineSession : bool
+    - servicesInitialization : Task
+    - PlayerNameKey : string
+    + RemoteEnemyCount : int
+    + KnownRelevantObjectCount : int
+    + AoiStatusText : string
+    + RewindHistory : ServerRewindHistory
+    + SecurityStrikeCount : int
+    + LastSecurityEvent : string
+    + ObservedServerTime : double
+}
+class EnemyVisualProxy {
+    + Id : int
+    + GameObject : GameObject
+    + TargetPosition : Vector3
+    + TargetRotation : Quaternion
+    + IsSmall : bool
+}
+class SchoolEscapeSocialServices {
+    + AudibleDistance : int
+    + ConversationalDistance : int
+    + PositionUpdateInterval : float
+    - InviteKind : string
+    - InviteVersion : int
+    + VoiceStatus : string
+    + FriendsStatus : string
+    + LocalPlayerId : string
+    + ChannelName : string
+    + FriendList : IReadOnlyList<FriendSummary>
+    + VoiceParticipants : IReadOnlyList<VivoxParticipant>
+    - friends : List<FriendSummary>
+    - participants : List<VivoxParticipant>
+    - eventsHooked : bool
+    - initializing : bool
+    - sessionActive : bool
+    - sessionGeneration : int
+    - nextPositionUpdate : float
+    - positionAnchor : GameObject
+    - publishedPresence : string
+    - updatingPresence : bool
+    - nextPresenceUpdate : float
+    - friendsConnection : Task
+}
+class PresenceActivity {
+    + state : string
+    + sessionCode : string
+}
+class SocialInvite {
+    + type : string
+    + version : int
+    + sessionCode : string
+    + sessionId : string
+    + senderName : string
+    + expiresUtcTicks : long
+    + senderPlayerId : string
+    + IsExpired : bool
+}
+class FriendSummary {
+    + PlayerId : string
+    + DisplayName : string
+    + Availability : Availability
+    + IsOnline : bool
+}
+class ServerRewindHistory {
+    + MaximumRewindSeconds : double
+    - FutureToleranceSeconds : double
+    - FrameCapacity : int
+    - MaximumEnemies : int
+    - MaximumActors : int
+    - frames : HistoryFrame[]
+    - nextFrame : int
+    - lastRecordedTick : int
+    + LastResult : string
+}
+class HistoryFrame {
+    + Tick : int
+    + ServerTime : double
+    + Valid : bool
+    + EnemyCount : int
+    + ActorCount : int
+    + Enemies : EntitySample[]
+    + Actors : EntitySample[]
+}
+class EntitySample {
+    + Id : int
+    + Position : Vector3
+}
+class PrototypeAlly {
+    - followOffset : Vector3
+}
+class PrototypePlayer {
+    + Facing : Vector3
+    + IsAimingFlash : bool
+    + InteractionStatus : string
+    - Speed : float
+    - MovementDeadZone : float
+    - interactPulse : bool
+    - flashCooldown : float
+    - currentInteraction : PrototypeInteractable
+    - interactionProgress : float
+    - moveFinger : int
+    - aimingFlash : bool
+    - flashUsesMouse : bool
+    - manualFlashAim : bool
+    - flashWasDragged : bool
+    - flashFinger : int
+    - flashPressPosition : Vector2
+    - flashCurrentPosition : Vector2
+    - flashAimDirection : Vector3
+    - aimIndicator : GameObject
+    - FlashAimThreshold : float
+    - FlashCancelRadius : float
+}
+class RescueDirectionUtility {
+}
+class RescueDoorAnchor {
+    + Direction : RescueDirection
+    + Gate : RoomExitGate
+}
+class RescueEntranceAnchor {
+    + Direction : RescueDirection
+    + Gate : RoomExitGate
+}
+class RescuePassageLink {
+    - passageLink : NavMeshLink
+    - regularEndpoint : Vector3
+    - rescueEndpoint : Vector3
+}
+class RescueRoomDefinition {
+    + CaptiveSpawn : Transform
+    + Doors : IReadOnlyList<RescueDoorAnchor>
+}
+class RoomExitGate {
+    + IsUnlocked : bool
+    + IsOpening : bool
+    + ConnectionPoint : Vector3
+}
+class RoomObjectiveController {
+    - activatingPlayer : Transform
+    - progress : float
+    + State : RoomObjectiveState
+    + Progress01 : float
+}
+class RoomRuntimeController {
+    + Definition : SchoolRoomDefinition
+    + State : RoomRuntimeState
+}
+class RoomSequenceCatalog {
+    + Count : int
+    + RescueRoom : GameObject
+}
+class SchoolRoomDefinition {
+    + RoomId : string
+    + Archetype : RoomArchetype
+    + ExitPanel : Transform
+    + ExitPanels : IReadOnlyList<Transform>
+    + Exits : IReadOnlyList<Transform>
+    + RandomInteractablesRoot : Transform
+    + GuaranteedBatteryRoot : Transform
+    + GuaranteedBandageRoot : Transform
+    + ObstaclesRoot : Transform
+    + PlayerSpawnCount : int
+    + EnemySpawnCount : int
+}
+class SchoolEscapePrototype {
+    + MatchResult : PrototypeMatchResult
+    + Batteries : int
+    + Bandages : int
+    + CaptiveCount : int
+    + DangerMultiplier : float
+    + CanUseBandage : bool
+    + IsExitOpening : bool
+    + ExitOpeningRemaining : float
+    + ExitStatusText : string
+    + CurrentRoomNumber : int
+    + CurrentRoomIndex : int
+    + TotalRooms : int
+    + IsFinalRoom : bool
+    + CurrentRoomId : string
+    + RoomProgressText : string
+    - ClientBridge : NetworkClientAllyBridge
+    + DisplayVictory : bool
+    + DisplayMatchResult : PrototypeMatchResult
+    + MemorialText : string
+    + DisplayHealth : int
+    + DisplayBatteries : int
+    + DisplayBandages : int
+    + DisplayDangerMultiplier : float
+    + DisplayRunTime : float
+    + DisplayRoomProgressText : string
+    + DisplayExitStatusText : string
+    + CurrentAnnouncementText : string
+    + DisplayInteractionStatus : string
+    + ActiveEnemyCount : int
+    + ActiveNormalEnemyCount : int
+    + ActiveSmallEnemyCount : int
+    + ActiveEnemies : IReadOnlyList<PrototypeEnemy>
+    + MaximumActiveEnemyCount : int
+    + EnemiesSpawnedThisRoom : int
+    + MaximumEnemiesPerRoom : int
+    + EnemyCounterText : string
+    + NetworkAoiStatusText : string
+    + IsRoomTransitioning : bool
+    + HasActiveRescueRoom : bool
+    + IsRescueEntranceOpen : bool
+    - enemies : List<PrototypeEnemy>
+    - interactables : List<PrototypeInteractable>
+    - activatedExitPanels : HashSet<PrototypeExitPanel>
+    - inventory : PrototypeInventory
+    - floorMaterial : Material
+    - wallMaterial : Material
+    - furnitureMaterial : Material
+    - authoredRoom : SchoolRoomDefinition
+    - roomSequence : RoomSequenceCatalog
+    - activeRoomInstance : GameObject
+    - activeRescueRoomInstance : GameObject
+    - activeRescueRoom : RescueRoomDefinition
+    - activeRescueEntrance : RescueEntranceAnchor
+    - rescueEntranceInteraction : PrototypeRescueEntrance
+    - connectedRescueDoor : RescueDoorAnchor
+    - rescuePassageLink : RescuePassageLink
+    - rescueEntranceOpening : bool
+    - rescueEntranceOpen : bool
+    - activeRescueCaptive : PrototypeActor
+    - currentRoomIndex : int
+    - roomTransitionInProgress : bool
+    - requiredExitPanelCount : int
+    - activeEnemySpawnPoints : List<Vector3>
+    - normalEnemiesSpawnedThisRoom : int
+    - smallEnemiesSpawnedThisRoom : int
+    - spawnTimer : float
+    - nextDirectorRoleUpdate : float
+    - recentDirectorActivity : float
+    - noSurvivorDefeatAt : float
+    - ExitOpeningDuration : float
+    - RescueEntranceOpeningDuration : float
+    - NoSurvivorGraceDuration : float
+    - NormalActiveCap : int
+    - SmallActiveCap : int
+    - FrenzyNormalActiveCap : int
+    - FrenzySmallActiveCap : int
+    - NormalRoomBudget : int
+    - SmallRoomBudget : int
+    - OrientationThreshold : float
+    - OrientationDominance : float
+    - OrientationStableDuration : float
+    - OrderedRoomIds : string[]
+    - exitOpening : bool
+    - exitOpeningEndsAt : float
+    - orientationCandidate : ScreenOrientation
+    - orientationCandidateSince : float
+    - nextOrientationChangeTime : float
+    - message : string
+    - messageUntil : float
+    - playerMessage : string
+    - playerMessageUntil : float
+    - allyMessage : string
+    - allyMessageUntil : float
+    - titleStyle : GUIStyle
+    - bodyStyle : GUIStyle
+    - centerStyle : GUIStyle
+    - networkCameraTarget : Transform
+    - CurrentNormalCap : int
+    - CurrentSmallCap : int
+    + EnemySpawnPoints : Vector3[]
+    - HasRemoteHuman : bool
+}
+class BasicGameFlowUI {
+    - Backdrop : Color
+    - Surface : Color
+    - Primary : Color
+    - Secondary : Color
+    - Muted : Color
+    - session : SchoolEscapePrototype
+    - panels : List<GameObject>
+    - announcementPanel : GameObject
+    - confirmedPlayerName : string
+    - quickButton : Button
+    - lobbyFriendsButton : Button
+    - quickSearch : CancellationTokenSource
+    - playMode : int
+    - modeLabel : Text
+    - Modes : string[]
+}
+class MobileHoldButton {
+}
+class MobileHudController {
+    - boundBandageButton : Button
+    - boundFlashButton : Button
+}
+class SchoolEscapeSocialUI {
+    - Surface : Color
+    - Primary : Color
+    - Secondary : Color
+    - Muted : Color
+    - friendIdInput : InputField
+    - copyIdButton : Button
+    - participantVolume : Slider
+    - friendNames : Text[]
+    - friendInvites : Button[]
+    - friendIds : string[]
+    - friendPage : int
+    - connecting : bool
+    - actionError : string
+    - openLobby : Action
+    - nextRefresh : float
+}
+MonoBehaviour <|-- PrototypeEnemy
+MonoBehaviour <|-- PrototypeActor
+MonoBehaviour <|-- PrototypeRitual
+MonoBehaviour <|-- PrototypeCamera
+MonoBehaviour <|-- PrototypeInteractable
+PrototypeInteractable <|-- PrototypeLocker
+PrototypeInteractable <|-- PrototypeKey
+PrototypeInteractable <|-- PrototypeExitPanel
+PrototypeInteractable <|-- PrototypeGuaranteedResourceFurniture
+PrototypeGuaranteedResourceFurniture <|-- PrototypeBatteryFurniture
+PrototypeGuaranteedResourceFurniture <|-- PrototypeBandageFurniture
+PrototypeInteractable <|-- PrototypeBatteryWorldPickup
+PrototypeInteractable <|-- PrototypeBandageWorldPickup
+PrototypeInteractable <|-- PrototypeDoor
+PrototypeInteractable <|-- PrototypeRescue
+PrototypeInteractable <|-- PrototypeRescueEntrance
+NetworkBehaviour <|-- NetworkClientAllyBridge
+NetworkBehaviour <|-- NetworkHostPlayerBridge
+MonoBehaviour <|-- SchoolEscapeNetworkBootstrap
+MonoBehaviour <|-- SchoolEscapeSocialServices
+PrototypeActor <|-- PrototypeAlly
+PrototypeActor <|-- PrototypePlayer
+MonoBehaviour <|-- RescueDoorAnchor
+MonoBehaviour <|-- RescueEntranceAnchor
+MonoBehaviour <|-- RescuePassageLink
+MonoBehaviour <|-- RescueRoomDefinition
+MonoBehaviour <|-- RoomExitGate
+MonoBehaviour <|-- RoomObjectiveController
+MonoBehaviour <|-- RoomRuntimeController
+ScriptableObject <|-- RoomSequenceCatalog
+MonoBehaviour <|-- SchoolRoomDefinition
+MonoBehaviour <|-- SchoolEscapePrototype
+MonoBehaviour <|-- BasicGameFlowUI
+MonoBehaviour <|-- MobileHoldButton
+IPointerDownHandler <|.. MobileHoldButton
+IPointerUpHandler <|.. MobileHoldButton
+IPointerExitHandler <|.. MobileHoldButton
+MonoBehaviour <|-- MobileHudController
+MonoBehaviour <|-- SchoolEscapeSocialUI
+PrototypeEnemy --> SchoolEscapePrototype : session
+PrototypeEnemy --> PrototypeActor : dragTarget, priorityTarget
+PrototypeCamera --> SchoolEscapePrototype : session
+PrototypeInteractable --> PrototypeActor : Complete(actor)
+PrototypeLocker --> PrototypeInteractable : Complete()
+PrototypeKey --> PrototypeInteractable : Complete()
+PrototypeExitPanel --> PrototypeInteractable : Complete()
+PrototypeGuaranteedResourceFurniture --> PrototypeActor : SpawnGuaranteedResource(actor)
+PrototypeGuaranteedResourceFurniture --> PrototypeInteractable : Complete()
+PrototypeBatteryFurniture --> PrototypeGuaranteedResourceFurniture : SpawnGuaranteedResource()
+PrototypeBandageFurniture --> PrototypeGuaranteedResourceFurniture : SpawnGuaranteedResource()
+PrototypeBatteryWorldPickup --> PrototypeInteractable : Complete()
+PrototypeBandageWorldPickup --> PrototypeInteractable : Complete()
+PrototypeDoor --> PrototypeInteractable : Complete()
+PrototypeRescue --> PrototypeInteractable : Complete()
+PrototypeRescueEntrance --> PrototypeInteractable : Complete()
+NetworkClientAllyBridge --> PrototypeAlly : ally
+NetworkClientAllyBridge --> SchoolEscapePrototype : session
+NetworkClientAllyBridge --> PrototypeInteractable : currentInteraction, Complete()
+NetworkHostPlayerBridge --> PrototypePlayer : player
+SchoolEscapeNetworkBootstrap --> SchoolEscapePrototype : session
+SchoolEscapeNetworkBootstrap --> ServerRewindHistory : rewindHistory, RewindHistory
+PrototypePlayer --> PrototypeInteractable : currentInteraction, Complete()
+RescueDoorAnchor --> RoomExitGate : Gate
+RescueEntranceAnchor --> RoomExitGate : Gate
+RoomRuntimeController --> SchoolRoomDefinition : Definition
+SchoolEscapePrototype --> NetworkClientAllyBridge : ClientBridge
+SchoolEscapePrototype --> PrototypeInventory : inventory
+SchoolEscapePrototype --> SchoolRoomDefinition : authoredRoom
+SchoolEscapePrototype --> RoomSequenceCatalog : roomSequence
+SchoolEscapePrototype --> RescueRoomDefinition : activeRescueRoom
+SchoolEscapePrototype --> RescueEntranceAnchor : activeRescueEntrance
+SchoolEscapePrototype --> PrototypeRescueEntrance : rescueEntranceInteraction
+SchoolEscapePrototype --> RescueDoorAnchor : connectedRescueDoor
+SchoolEscapePrototype --> RescuePassageLink : rescuePassageLink
+SchoolEscapePrototype --> PrototypeActor : activeRescueCaptive
+BasicGameFlowUI --> SchoolEscapePrototype : session
+@enduml
